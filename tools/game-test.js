@@ -1617,6 +1617,51 @@ let stageRef = null;
     const profScene = router.current();
     ok(!!find(profScene.root, (w) => w.onBack && w.title), '设置页有返回键');
     ok(!tabBarOf(profScene), '设置页没有底部导航（它是二级页）');
+
+    // ---- 「解读服务状态」这一行必须说清"走的是哪条路" ----
+    // 为什么单独测：第一次部署时最容易搞混的两件事就是
+    // "云调用没配上（服务名/环境 ID/还没部署）" 和 "服务压根没起"，
+    // 两者的解决办法完全不同，提示不能含糊成一句"连不上"。
+    const apiMod = require(path.join(ROOT, 'services/api.js'));
+    {
+      // ① 云调用失败 → 单独一类原因（不要混进普通 NETWORK）
+      const cloudFail = apiMod.reasonText('CLOUD');
+      ok(cloudFail.indexOf('云调用') >= 0 && cloudFail.indexOf('服务名') >= 0,
+        `云调用失败有专门的提示：${cloudFail.slice(0, 24)}…`);
+      ok(apiMod.REASON_TEXT.CLOUD !== apiMod.REASON_TEXT.NETWORK,
+        '云调用失败不再和"公网连不上"共用一句话');
+
+      // ② 诊断结果里带"哪条路"（via/where），页面才有东西可显示
+      const diag = await apiMod.diagnose();
+      ok(diag.via === 'cloud' || diag.via === 'http', `诊断结果标了通道（via=${diag.via}）`);
+      ok(typeof diag.where === 'string' && diag.where.length > 0,
+        `诊断结果能说清连的是哪儿：${diag.where}`);
+      ok(typeof diag.message === 'string' && diag.message.length > 0, '诊断结果有一句人话');
+
+      // ③ 设置页把"短状态"和"怎么办"分开显示：
+      //    短状态进那一行（SettingRow 的 desc 不换行），长提示进下面的段落
+      const scene2 = router.current();
+      scene2.checkBackend();
+      await sleep(80);
+      step(1);
+      const row = find(scene2.root, (w) => w.title === copy.UI.profileBackend);
+      ok(!!row, '设置页有「解读服务状态」这一行');
+      ok(!!row.desc && row.desc.length <= 16, `那一行只放短状态（"${row.desc}"）`);
+      const texts = [];
+      (function walk2(w) {
+        ['text', 'content', 'desc'].forEach((f) => {
+          if (typeof w[f] === 'string' && w[f]) texts.push(w[f]);
+        });
+        (w.children || []).forEach(walk2);
+      })(scene2.root);
+      const joined = texts.join('｜');
+      ok(joined.indexOf('云调用') >= 0 || joined.indexOf('公网') >= 0,
+        '页面上说明了走的是云调用还是公网');
+      if (scene2.backend.detail) {
+        ok(joined.indexOf(scene2.backend.detail.split('\n')[0].slice(0, 10)) >= 0,
+          '失败时把"该怎么办"整段显示出来了（没被截断）');
+      }
+    }
   }
 
 

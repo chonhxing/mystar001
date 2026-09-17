@@ -293,7 +293,9 @@ class ProfileScene extends Scene {
     const backendRow = new SettingRow({
       x: 0, y: sy, w: contentW - 56, title: copy.UI.profileBackend,
       // 这一行保留说明：它是**诊断信息**，不是产品文案 ——
-      // AI 服务连不上时，用户（和开发者）需要知道连的是哪个地址、为什么不通
+      // AI 服务连不上时，用户（和开发者）需要知道连的是哪个地址、为什么不通。
+      // ⚠️ 这里只能放**一行短字**（SettingRow 的 desc 不换行）：
+      //    短状态放这儿，长提示放下面的段落里
       desc: this.backend.text,
       dotState: this.backend.state,
       onTap: () => this.checkBackend()
@@ -304,6 +306,19 @@ class ProfileScene extends Scene {
     setCard.fitHeight(0);
     scroll.add(setCard);
     y += setCard.h + 28;
+
+    // 连通性出问题（或 AI 没配）时，把"该怎么办"整段写在卡片下面：
+    // 这类提示只有几行字，但它是**唯一**能让用户自己解决的地方，
+    // 塞进一行 desc 会被截断成看不懂的半句话
+    if (this.backend.detail) {
+      const hint = new Paragraph({
+        x: pad, y, w: contentW, size: FONT.micro,
+        color: this.backend.state === 'bad' ? COLOR.red : COLOR.gold,
+        text: this.backend.detail, lineHeight: 34
+      });
+      scroll.add(hint);
+      y += hint.h + 28;
+    }
 
     // ---- 关于 ----
     const aboutCard = new Card({ x: pad, y, w: contentW });
@@ -359,17 +374,18 @@ class ProfileScene extends Scene {
     this.backend = { text: '检测中…', state: 'idle' };
     this.build();
     api.diagnose().then((d) => {
-      if (d.ok) {
-        this.backend = {
-          text: `${d.message} · ${d.base}`,
-          state: d.aiConfigured ? 'ok' : 'warn'
-        };
-      } else {
-        this.backend = {
-          text: `${d.message}｜${d.base}${d.hint ? `｜${d.hint}` : ''}`,
-          state: 'bad'
-        };
-      }
+      // 一行短状态（走哪条路 + 通不通），详细"怎么办"放到下面的段落里。
+      // 第一次部署时"走的是云调用还是公网"这一条信息能省掉半小时瞎猜：
+      // 云调用失败（服务名/环境 ID/没部署）和服务没起，解决办法完全不同。
+      const via = d.via === 'cloud' ? '云调用' : '公网';
+      const short = d.ok
+        ? `${via} · ${d.aiConfigured ? '正常' : 'AI 未配置'}`
+        : `${via}失败`;
+      this.backend = {
+        text: short,
+        state: d.ok ? (d.aiConfigured ? 'ok' : 'warn') : 'bad',
+        detail: d.ok && d.aiConfigured ? '' : `${d.message}${d.hint ? `\n${d.hint}` : ''}`
+      };
       this.build();
     });
   }

@@ -54,6 +54,11 @@ function reasonOf(err) {
   const msg = String((err && err.errMsg) || err || '');
   if (msg.indexOf('timeout') >= 0) return 'TIMEOUT';
   if (msg.indexOf('domain') >= 0 || msg.indexOf('合法域名') >= 0) return 'DOMAIN';
+  // 云调用失败单独算一类：它跟"公网连不上"的原因完全不是一回事
+  // （服务名写错 / 环境 ID 不对 / 服务还没部署），提示也要分开给
+  if (msg.toLowerCase().indexOf('callcontainer') >= 0 || msg.toLowerCase().indexOf('cloud') >= 0) {
+    return 'CLOUD';
+  }
   if (msg.indexOf('fail') >= 0) return 'NETWORK';
   return 'NETWORK';
 }
@@ -496,6 +501,7 @@ const REASON_TEXT = {
   DOMAIN: '域名未校验 —— 开发者工具 → 详情 → 本地设置 → 勾选「不校验合法域名」',
   NETWORK: '连不上 —— 确认后端已启动（npm start），地址见下方',
   TIMEOUT: '超时 —— 后端响应太慢，或 IP 不通',
+  CLOUD: '云调用失败 —— 多半是服务名/环境 ID 不对，或服务还没部署成功（见 docs/DEPLOY-CLOUD.md 第 5 节）',
   HTTP_503: '后端已连上，但 AI 未配置 —— 检查 server/.env 的 DEEPSEEK_API_KEY',
   HTTP_401: '登录态问题 —— 试试重新登录',
   HTTP_404: '接口不存在 —— 检查 API_BASE 是否指向本项目的后端'
@@ -530,17 +536,25 @@ function baseHint() {
  * 给设置页用，方便一眼看出是配置问题还是服务没起。
  */
 function diagnose() {
+  // 这次健康检查实际会走哪条路（云调用还是公网）—— 排查部署问题时，
+  // "走的是哪条路"和"通不通"一样重要：云调用失败和服务没起，解决办法完全不同
+  const via = useCloud({ timeout: 5000 }) ? 'cloud' : 'http';
   return request('/api/health', { timeout: 5000 }).then((res) => {
     const base = CONFIG.API_BASE;
+    const cloud = { env: CONFIG.CLOUD.ENV, service: CONFIG.CLOUD.SERVICE, ready: cloudReady() };
+    const where = via === 'cloud' ? `云调用（${cloud.service} / ${cloud.env}）` : `公网 ${base}`;
     if (res.ok) {
       const ai = res.body.ai || {};
       return {
         ok: true,
         base,
+        via,
+        cloud,
+        where,
         aiConfigured: !!ai.configured,
         model: ai.model || '',
-        message: ai.configured ? '正常（AI 已配置）' : '后端正常，但 AI 未配置 key',
-        hint: ai.configured ? '' : '检查 server/.env 的 DEEPSEEK_API_KEY',
+        message: ai.configured ? `正常（AI 已配置 · 走${where}）` : `后端正常，但 AI 未配置 key（走${where}）`,
+        hint: ai.configured ? '' : '检查云托管控制台（或 server/.env）的 DEEPSEEK_API_KEY',
         reason: ''
       };
     }
@@ -548,9 +562,15 @@ function diagnose() {
     return {
       ok: false,
       base,
+      via,
+      cloud,
+      where,
       reason: key,
-      message: REASON_TEXT[key] || res.message || '连不上解读服务',
-      hint: baseHint()
+      message: `${REASON_TEXT[key] || res.message || '连不上解读服务'}（走的是${where}）`,
+      hint: key === 'CLOUD'
+        ? `确认云托管里的服务名是「${cloud.service || '(空)'}」、环境 ID 是「${cloud.env || '(空)'}」，` +
+          '并且服务已经部署成功（控制台能看到运行中的副本）'
+        : baseHint()
     };
   });
 }
