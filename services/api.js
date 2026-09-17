@@ -482,7 +482,7 @@ function entitlementSync() {
  */
 function relogin() {
   return new Promise((resolve) => {
-    const send = (code) => {
+    const send = (code, isRetry) => {
       request('/api/account/relogin', {
         method: 'POST',
         timeout: 10000,
@@ -492,14 +492,29 @@ function relogin() {
           token = res.body.token;
           storage.setToken(token);
           resolve({ ok: true, dev: !!res.body.dev });
-        } else {
-          resolve({
-            ok: false,
-            blocked: !!(res.body && res.body.blocked),
-            error: (res.body && res.body.error) || res.reason || 'RELOGIN_FAILED',
-            message: res.message || (res.body && res.body.message)
-          });
+          return;
         }
+        const error = (res.body && res.body.error) || res.reason || 'RELOGIN_FAILED';
+        /**
+         * 微信返回 40029 = code 无效（多半是**被用过**）。这不是用户的错：
+         * wx.login 在很短时间内可能给出同一个 code，而我们有两条登录路径
+         * （`/api/session` 和这里），先走的那条会把 code 消耗掉，
+         * 后走的那条就必然 40029 —— 真机上就是这么撞的（日志里 75ms 那次）。
+         * 所以重拿一次 code 再试一轮，只重试一次。
+         */
+        if (error === 'WX_40029' && !isRetry) {
+          wxLoginCode().then((again) => {
+            if (again.code) send(again.code, true);
+            else resolve({ ok: false, error: 'WX_LOGIN_NO_CODE', message: `微信登录没拿到凭证：${again.reason}` });
+          });
+          return;
+        }
+        resolve({
+          ok: false,
+          blocked: !!(res.body && res.body.blocked),
+          error,
+          message: res.message || (res.body && res.body.message)
+        });
       });
     };
     wxLoginCode().then((r) => {
@@ -510,7 +525,7 @@ function relogin() {
         resolve({ ok: false, error: 'WX_LOGIN_NO_CODE', message: `微信登录没拿到凭证：${r.reason}` });
         return;
       }
-      send(r.code);
+      send(r.code, false);
     });
   });
 }
