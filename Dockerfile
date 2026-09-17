@@ -30,7 +30,9 @@ WORKDIR /app
 
 # 先只装依赖，利用镜像层缓存：改代码不会重新装一遍
 COPY package.json ./
-RUN npm install --omit=dev --no-audit --no-fund mysql2@^3.11.0
+# npm 源换成腾讯镜像：构建机在国内，官方源经常慢到超时（官方模板也是这么做的）
+RUN npm config set registry https://mirrors.cloud.tencent.com/npm/ \
+ && npm install --omit=dev --no-audit --no-fund mysql2@^3.11.0
 
 # 服务端代码 + 它依赖的共享模块
 # （server 会 require ../core 与 ../data 在本地复算命盘、../config 读玩法旋钮；
