@@ -357,7 +357,45 @@ POST /api/account/relogin 401 4ms      ← 快到 1 秒内就失败，说明压�
 ```
 
 ⚠️ **有公网域名 ≠ 出了网**：域名只能证明"入"通。判断"出"要看容器日志/接口返回，
-或者直接看 `/api/health` 的 `stats.calls` 是不是一直为 0。
+或者直接看 `/api/health` 里 `egress` 那一段（服务会自己探一次并报回来）。
+
+#### 真正的坑：微信接口在容器里拿到的是**自签名证书**
+
+出网开关打开之后，`/api/health` 的 `egress` 报出来的是这个：
+
+```json
+"wechat": { "ok": false, "code": "DEPTH_ZERO_SELF_SIGNED_CERT" },
+"ai":     { "ok": true,  "status": 401 }        ← DeepSeek 一切正常
+```
+
+也就是：**容器出网是好的**（DeepSeek 111 毫秒就通），但访问 `api.weixin.qq.com`
+时拿到的是**自签名证书** —— 云托管在容器内网对微信接口做了一层代理，
+代理用自己的证书，Node 内置 fetch 按系统 CA 校验必然失败。
+
+⚠️ 这一条特别容易误判成"没有公网出口"（我们就是这么绕了一圈才查到），
+因为它的表现和出网被挡一模一样：登录 401、`stats.calls` 恒为 0。
+**区分方法**：看 `egress.detail` 里 `ai` 是不是 ok —— AI 通、只有微信不通，就是证书问题。
+
+处理方式（`server/wxhttp.js` 已实现）：
+
+| 档位 | 什么时候用 | 说明 |
+| --- | --- | --- |
+| `strict` | 首选，永远先试这个 | 正常证书链（本机、以及证书正常的域名）走这档 |
+| `insecure` | **仅当**失败原因是证书问题、**且**域名在白名单（只有 `api.weixin.qq.com`） | 只对这一个域名放宽校验，重试一次；会打警告并把 `via` 报给 `/api/health` |
+
+边界很清楚：**不是** `NODE_TLS_REJECT_UNAUTHORIZED=0` 那种"一关全关"，
+也**不会静默**——`/api/health` 里能看到当前用的是哪一档。
+`egress.detail.wechat.cert` 还会带回对端证书的签发者/指纹，
+以后想改成"信任这个 CA"的正式做法，照着那个来。
+
+**怎么判断登录真的通了**：拿一个无效 code 打登录接口，
+应该返回**微信自己给的错误码**（例如 `WX_40029`），而不是 `WX_UNREACHABLE`：
+
+```bash
+curl -s -X POST -H 'Content-Type: application/json' \
+  -d '{"code":"invalid-code-probe"}' https://<域名>/api/account/relogin
+# 期望：{"ok":false,"error":"WX_40029","message":"登录凭证已失效，请重试"}
+```
 
 ### 关于"公网域名"的一个安全提醒
 
