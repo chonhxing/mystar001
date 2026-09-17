@@ -3,9 +3,76 @@
 > 目标：把 `server/` 跑在微信云托管上，客户端通过 `wx.cloud.callContainer` 云调用访问 ——
 > **不需要备案域名、不用配 request 合法域名，真机预览也能连上**。
 
+## 0. 如果 `git push` 卡住 / 报 Connection was reset
+
+在国内网络下 **`github.com` 这个域名经常是连不上的**（git 的 HTTPS 端点和网页都在它上面）。
+本机实测：
+
+| 域名 | 结果 |
+| --- | --- |
+| `github.com:443` | ❌ 连不上（连接超时） |
+| `api.github.com` | ✅ 通 |
+| `codeload.github.com` | ✅ 通 |
+| `ssh.github.com:443` | ✅ 通 |
+| `gitee.com` | ✅ 通 |
+| `registry.npmjs.org` | ✅ 通（npm 能用） |
+
+也就是说：**不是权限问题，是网络到不了 github.com**。三条路任选一条：
+
+### 路线 A（推荐）：代码源换成 Gitee
+
+微信云托管支持 GitHub / GitLab / **Gitee** 三种代码源，Gitee 在国内直连。
+你本来就有 Gitee 账号（git 里的提交身份就是 Gitee 的），所以这条路最省事：
+
+```bash
+# 在 gitee.com 建一个私有仓库（不要勾 README，会和本地冲突）
+cd "D:/杂项软件/微信小程序-我推的占星"
+git remote add gitee https://gitee.com/你的用户名/仓库名.git
+git push -u gitee master
+```
+
+然后在云托管「新建服务」时**代码源选 Gitee**，其余配置照本文档往下走。
+
+### 路线 B：不走代码托管，直接上传代码包
+
+云托管控制台支持上传本地代码包；也有官方 CLI（`npm i -g @wxcloud/cli`，npm 是通的）：
+
+```bash
+npm i -g @wxcloud/cli
+wxcloud login       # 扫码登录
+wxcloud deploy      # 在项目根目录执行，会把本目录打包上传
+```
+
+### 路线 C：把 github.com 弄通
+
+挂代理 / 开 VPN 之后，原来那套就行：
+
+```bash
+git push -u origin master
+```
+
+> ⚠️ 注意本仓库的默认分支已经是 **`master`**（和云托管流水线里配的分支保持一致），
+> 不是 `main`。
+
+### SSH 走 443（要动 GitHub 网页，所以只在你能打开 github.com 时才有意义）
+
+```bash
+ssh-keygen -t ed25519 -C "chonhxing" -f ~/.ssh/id_ed25519_github -N ""
+# 把 ~/.ssh/id_ed25519_github.pub 的内容加到 GitHub → Settings → SSH keys
+cat >> ~/.ssh/config <<'EOF'
+Host github-ssh
+  HostName ssh.github.com
+  Port 443
+  User git
+  IdentityFile ~/.ssh/id_ed25519_github
+EOF
+git remote set-url origin git@github-ssh:chonhxing/mystar001.git
+git push -u origin master
+```
+
 ---
 
-## 0. ⚠️ 先处理一件事：数据库密码已经泄露了
+## 0.5 ⚠️ 数据库密码已经泄露了，先处理它
 
 你在对话里贴过明文数据库密码。**请立刻去云托管控制台改掉它**（数据库 → 账号管理 → 改密码）。
 
@@ -18,14 +85,14 @@
 
 ---
 
-## 1. 建私有仓库并推代码
+## 1. 把代码推上去（分支用 master）
 
 本地已经是一个 git 仓库并提交过了（`git log` 能看到"首次提交"）。你只需要建远端：
 
 ```bash
 # 在 GitHub 上新建一个 Private 仓库（不要勾 README/.gitignore，会冲突）
 git remote add origin https://github.com/你的用户名/你的仓库名.git
-git push -u origin main        # 如果默认分支是 master 就写 master
+git push -u origin master
 ```
 
 推之前先确认一遍**没有密钥进仓库**：
@@ -44,7 +111,7 @@ git ls-files | grep -E "\.env$"     # 应该什么都没有
 | --- | --- | --- |
 | 服务名称 | 自己起一个，例如 `wotui-server` | **必须和客户端配置里的 `SERVICE` 完全一致**（区分大小写，填错会 404/503） |
 | 代码源 | GitHub → 授权并选中刚推的私有仓库 | 之后每次 push 都能自动构建 |
-| 分支 | `main`（或 master） | |
+| 分支 | `master` | 和推送的分支保持一致 |
 | Dockerfile 路径 | `Dockerfile`（仓库根目录） | 已在仓库里准备好 |
 | **监听端口** | **80** | Dockerfile 里 `ENV PORT=80`。端口不一致会让容器起来了但请求到不了（表现是一直超时） |
 | 最小副本 | 1 | 见下面「为什么必须是 1 个副本」 |
