@@ -2,7 +2,7 @@ const { Scene } = require('../router.js');
 const { Widget, Label, Paragraph, Panel, Hotspot } = require('../ui/widget.js');
 const { ScrollView } = require('../ui/interactive.js');
 const { Starfield, TabBar, CharCard } = require('../ui/game.js');
-const { COLOR, FONT, font, RADIUS } = require('../theme.js');
+const { COLOR, CARD, FONT, font, RADIUS, TXT } = require('../theme.js');
 const draw = require('../draw.js');
 const text = require('../text.js');
 const copy = require('../../../config/copy.js');
@@ -25,15 +25,36 @@ const STATUS_FILTERS = [
   { key: 'locked', name: '未遇见' }
 ];
 
-/** 筛选小胶囊 */
+/**
+ * 筛选小胶囊：文字 + 数量角标。
+ *
+ * 未选中也要看得见 —— 以前描边是 8% 白，在深底上几乎消失，
+ * 用户根本不知道那里有一排可点的筛选项（"筛选器对比度不足"）。
+ */
 class Chip extends Widget {
   constructor(opts) {
     super(Object.assign({ tapEnabled: true }, opts));
-    this.label = opts.label || '';
-    this.on = !!opts.on;
-    this.h = 56;
-    this.w = Math.round(text.measure(this.label, font(FONT.small))) + 44;
-    this.handler = opts.onTap || null;
+    const o = opts || {};
+    this.label = o.label || '';
+    this.count = o.count;
+    this.on = !!o.on;
+    this.h = 60;
+    this.pressScale = 0.97;
+    this.pad = 26;
+    this.gap = 10;
+    this.handler = o.onTap || null;
+    this.lineHeight = this.h;
+    this.layout();
+  }
+
+  layout() {
+    this.labelFont = font(FONT.small, this.on ? '600' : '');
+    this.countFont = font(FONT.tiny, '600');
+    this.labelW = Math.round(text.measure(this.label, this.labelFont));
+    this.countW = this.count === undefined || this.count === null
+      ? 0
+      : Math.round(text.measure(String(this.count), this.countFont));
+    this.w = this.labelW + this.pad * 2 + (this.countW ? this.gap + this.countW : 0);
   }
 
   onTap() {
@@ -42,20 +63,23 @@ class Chip extends Widget {
 
   drawSelf(ctx) {
     if (this.on) {
-      const g = ctx.createLinearGradient(0, 0, this.w, this.h);
-      g.addColorStop(0, COLOR.goldLight);
-      g.addColorStop(1, COLOR.gold);
-      draw.fillRoundRect(ctx, 0, 0, this.w, this.h, this.h / 2, g);
+      draw.fillRoundRect(ctx, 0, 0, this.w, this.h, this.h / 2, 'rgba(232,200,122,0.10)');
+      draw.strokeRoundRect(ctx, 0, 0, this.w, this.h, this.h / 2, COLOR.gold, 1.6);
+      if (this.pressT > 0.02) draw.glow(ctx, this.w / 2, this.h / 2, this.w * 0.5, COLOR.gold, 0.1);
     } else {
-      draw.fillRoundRect(ctx, 0, 0, this.w, this.h, this.h / 2, 'rgba(255,255,255,0.045)');
-      draw.strokeRoundRect(ctx, 0, 0, this.w, this.h, this.h / 2, COLOR.lineSoft, 1);
+      draw.fillRoundRect(ctx, 0, 0, this.w, this.h, this.h / 2, 'rgba(255,255,255,0.04)');
+      draw.strokeRoundRect(ctx, 0, 0, this.w, this.h, this.h / 2, 'rgba(255,255,255,0.15)', 1);
     }
-    ctx.font = font(FONT.small, this.on ? '600' : '');
-    ctx.fillStyle = this.on ? '#2A1E05' : COLOR.ink2;
-    ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(this.label, this.w / 2, this.h / 2 + 1);
     ctx.textAlign = 'left';
+    ctx.font = this.labelFont;
+    ctx.fillStyle = this.on ? COLOR.gold : COLOR.ink2;
+    ctx.fillText(this.label, this.pad, this.h / 2 + 1);
+    if (this.countW) {
+      ctx.font = this.countFont;
+      ctx.fillStyle = this.on ? 'rgba(232,200,122,0.75)' : COLOR.ink4;
+      ctx.fillText(String(this.count), this.pad + this.labelW + this.gap, this.h / 2 + 1);
+    }
   }
 }
 
@@ -89,6 +113,20 @@ class CodexScene extends Scene {
       score: codex[c.id] ? codex[c.id].firstScore || 0 : 0,
       count: codex[c.id] ? codex[c.id].count : 0
     }));
+    // 筛选胶囊上的数量角标：让用户点之前就知道"这个筛选里有多少个"
+    this.rarityCount = {};
+    this.all.forEach((r) => {
+      const k = r.char.rarity;
+      this.rarityCount[k] = (this.rarityCount[k] || 0) + 1;
+    });
+  }
+
+  countOf(filterKey, isStatus) {
+    if (filterKey === 'all') return CHARACTERS.length;
+    if (isStatus) {
+      return filterKey === 'unlocked' ? this.unlockedCount : CHARACTERS.length - this.unlockedCount;
+    }
+    return this.rarityCount[filterKey] || 0;
   }
 
   filtered() {
@@ -112,45 +150,53 @@ class CodexScene extends Scene {
     const W = this.stage.width;
     const pad = 32;
     const contentW = W - pad * 2;
-    const top = this.stage.contentTop + 16;
+    // 头部整体下移 20：标题和计数器要**同一行**，而计数器是右对齐的，
+    // 贴在 contentTop 上会钻进右上角胶囊按钮的区域（布局审计会报"压胶囊"）
+    const top = this.stage.contentTop + 36;
 
     this.root.clear();
     this.root.add(new Starfield({ x: 0, y: 0, w: W, h: this.stage.height, seed: 13, ring: false }));
 
-    // ---- 头部 ----
-    this.root.add(new Label({ x: pad, y: top, w: contentW * 0.7, text: copy.SCENE.codex.title, size: FONT.h1, weight: '700', color: COLOR.ink }));
-    this.root.add(new Label({
-      x: 0, y: top + 8, w: W - pad, align: 'right', size: 44, weight: '700', color: COLOR.gold,
-      text: `${this.unlockedCount}`
-    }));
-    this.root.add(new Label({
-      x: 0, y: top + 22, w: W - pad - 52, align: 'right', size: FONT.tiny, color: COLOR.ink4,
-      text: `/ ${CHARACTERS.length}`
-    }));
+    // ---- 头部：标题 + 计数器同一行（40 / 60，数字金色、总数灰） ----
+    this.root.add(new Label({ x: pad, y: top, w: contentW * 0.6, text: copy.SCENE.codex.title, size: FONT.h1, weight: '700', color: TXT.title }));
+    {
+      const numFont = font(FONT.h2, '700');
+      const restFont = font(FONT.tiny);
+      const numStr = String(this.unlockedCount);
+      const restStr = `/ ${CHARACTERS.length}`;
+      const nw = text.measure(numStr, numFont);
+      const rw = text.measure(restStr, restFont);
+      const left = W - pad - (nw + 8 + rw);
+      const lbl = new Widget({ x: left, y: top, w: nw + 8 + rw, h: 52 });
+      lbl.drawSelf = (ctx) => {
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'left';
+        ctx.font = numFont;
+        ctx.fillStyle = COLOR.gold;
+        ctx.fillText(numStr, 0, lbl.h / 2);
+        ctx.font = restFont;
+        ctx.fillStyle = COLOR.ink4;
+        ctx.fillText(restStr, nw + 8, lbl.h / 2 + 6);
+      };
+      this.root.add(lbl);
+    }
 
-    // 进度条
-    const barY = top + 76;
-    this.root.add(new Panel({
-      x: pad, y: barY, w: contentW, h: 8, radius: 4, fill: 'rgba(255,255,255,0.08)'
-    }));
+    // 进度条（细一点、带流光）
+    const barY = top + 52;
+    const bar = new Widget({ x: pad, y: barY, w: contentW, h: 10 });
     const pct = this.unlockedCount / CHARACTERS.length;
-    const fill = new Panel({
-      x: pad, y: barY, w: Math.max(8, contentW * pct), h: 8, radius: 4, fill: null
-    });
-    fill.drawSelf = (ctx) => {
-      const g = ctx.createLinearGradient(0, 0, contentW, 0);
-      g.addColorStop(0, COLOR.violet);
-      g.addColorStop(1, COLOR.gold);
-      draw.fillRoundRect(ctx, 0, 0, Math.max(8, contentW * pct), 8, 4, g);
+    bar.drawSelf = (ctx, stage, t) => {
+      draw.flowBar(ctx, 0, 3, contentW, 6, pct, t);
     };
-    this.root.add(fill);
+    bar.update = () => true; // 流光一直在跑
+    this.root.add(bar);
 
     // ---- 筛选 ----
-    let fy = barY + 28;
+    let fy = barY + 40;
     let fx = pad;
     RARITY_FILTERS.forEach((f) => {
       const chip = new Chip({
-        x: fx, y: fy, label: f.name, on: this.rarityKey === f.key,
+        x: fx, y: fy, label: f.name, count: this.countOf(f.key, false), on: this.rarityKey === f.key,
         onTap: () => {
           this.rarityKey = f.key;
           this.build();
@@ -158,44 +204,43 @@ class CodexScene extends Scene {
       });
       if (fx + chip.w > W - pad) {
         fx = pad;
-        fy += 68;
+        fy += 72;
         chip.x = fx;
         chip.y = fy;
       }
       this.root.add(chip);
-      fx += chip.w + 12;
+      fx += chip.w + 14;
     });
-    fy += 68;
+    fy += 76;
     fx = pad;
     STATUS_FILTERS.forEach((f) => {
       const chip = new Chip({
-        x: fx, y: fy, label: f.name, on: this.statusKey === f.key,
+        x: fx, y: fy, label: f.name, count: this.countOf(f.key, true), on: this.statusKey === f.key,
         onTap: () => {
           this.statusKey = f.key;
           this.build();
         }
       });
       this.root.add(chip);
-      fx += chip.w + 12;
+      fx += chip.w + 14;
     });
 
     // ---- 网格 ----
-    const gridTop = fy + 80;
+    const gridTop = fy + 84;
     const tabH = 108;
     const scroll = new ScrollView({ x: 0, y: gridTop, w: W, h: this.stage.height - gridTop - tabH });
     this.scroll = scroll;
     this.root.add(scroll);
 
     const cols = 2;
-    const gap = 20;
+    const gap = CARD.gap; // 列间距 = 行间距 = 24（统一网格节奏）
     const cellW = (contentW - gap) / 2;
-    // 卡面不再是 3:4 的立绘位，而是扁徽记区（w*0.42）+ 文字区
-    const cellH = Math.round(cellW * 0.42) + 116;
+    const cellH = CharCard.heightFor('md', cellW);
     const list = this.filtered();
 
     if (!list.length) {
       scroll.add(new Paragraph({
-        x: pad, y: 80, w: contentW, align: 'center', text: copy.UI.codexEmpty, size: FONT.body, color: COLOR.ink4
+        x: pad, y: 80, w: contentW, align: 'center', text: copy.UI.codexEmpty, size: FONT.body, color: COLOR.ink2
       }));
     }
 

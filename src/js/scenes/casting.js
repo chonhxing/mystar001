@@ -159,11 +159,22 @@ class CastingScene extends Scene {
     ctx.setLineDash && ctx.setLineDash([]);
     ctx.restore();
 
+    /**
+     * 六边形内环 + 中心星点：这才是"我们自己的加载动画"。
+     * 没有它，中间那团呼吸光看起来就是个普通的转圈 ——
+     * 六边形是这套视觉里"命途"的形状（徽记的同心多边形就是它）。
+     */
+    ctx.save();
+    ctx.translate(cx, cy);
+    draw.hexRing(ctx, 0, 0, 104, spin * 0.5, 'rgba(232,200,122,0.30)', 1.6);
+    ctx.restore();
+
     // 呼吸光心
     const pulse = 0.5 + 0.5 * Math.sin(t / 420);
     draw.radialGlow(ctx, cx, cy, 130 + pulse * 26, 'rgba(232,200,122,0.30)', 0.85);
     draw.glow(ctx, cx, cy, 42 + pulse * 6, COLOR.gold, 0.5);
     draw.radialGlow(ctx, cx, cy, 300, 'rgba(139,108,240,0.12)', 1);
+    draw.sparkle(ctx, cx, cy, 30 + pulse * 5, COLOR.goldLight, 0.5 + pulse * 0.4);
 
     // 进度圆环
     const p = Math.min(1, this.elapsed / this.minMs);

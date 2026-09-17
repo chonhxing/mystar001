@@ -1,10 +1,11 @@
 const { Scene } = require('../router.js');
 const { Widget, Label, Paragraph, Card, Panel, SectionTitle, HLine } = require('../ui/widget.js');
-const { Button, ScrollView } = require('../ui/interactive.js');
+const { Button, ScrollView, drawSwitchShape } = require('../ui/interactive.js');
 const { Starfield, TopBar } = require('../ui/game.js');
-const { COLOR, FONT, RADIUS, font } = require('../theme.js');
+const { COLOR, CARD, FONT, RADIUS, font } = require('../theme.js');
 const draw = require('../draw.js');
 const text = require('../text.js');
+const icons = require('../ui/icon.js');
 const copy = require('../../../config/copy.js');
 const { CONFIG } = require('../../../config/index.js');
 const { CHARACTER_MAP, RARITY, CHARACTERS } = require('../../../data/characters.js');
@@ -16,7 +17,7 @@ const api = require('../../../services/api.js');
 const agreementUi = require('../ui/agreement.js');
 const agreement = require('../../../services/agreement.js');
 
-/** 可点的设置行 */
+/** 可点的设置行（前置图标 + 标题 + 可选说明 + 行尾开关/状态点/箭头） */
 class SettingRow extends Widget {
   constructor(opts) {
     super(Object.assign({ tapEnabled: true }, opts));
@@ -24,10 +25,14 @@ class SettingRow extends Widget {
     // desc 是可选的说明小字。不传时标题垂直居中、行高收窄 ——
     // 页面上不再有解释性小字（用户要求），所以大多数行都不带 desc
     this.desc = opts.desc || '';
-    this.h = opts.h || (this.desc ? 118 : 92);
+    this.icon = opts.icon || '';
+    this.h = opts.h || (this.desc ? 122 : 108);
     this.switchOn = opts.switchOn;
     this.handler = opts.onTap || null;
     this.dotState = opts.dotState || '';
+    // 开关的尺寸固定在这一行里（整行可点切换，所以开关自己不吃点击）
+    this.swW = 100;
+    this.swH = 60;
   }
 
   onTap() {
@@ -35,34 +40,34 @@ class SettingRow extends Widget {
   }
 
   drawSelf(ctx) {
+    let tx = 0;
+    if (this.icon) {
+      icons.drawIcon(ctx, this.icon, 20, this.h / 2, 40, COLOR.ink, 0.6);
+      tx = 56;
+    }
     ctx.font = font(FONT.body);
     ctx.fillStyle = COLOR.ink;
     ctx.textBaseline = 'middle';
-    ctx.fillText(this.title, 0, this.desc ? 42 : this.h / 2);
+    ctx.textAlign = 'left';
+    ctx.fillText(this.title, tx, this.desc ? 44 : this.h / 2);
     if (this.desc) {
       ctx.font = font(FONT.micro);
       ctx.fillStyle = COLOR.ink4;
-      ctx.fillText(text.singleLine(this.desc, this.w - 140, font(FONT.micro)), 0, 82);
+      ctx.fillText(text.singleLine(this.desc, this.w - this.swW - 40 - tx, font(FONT.micro)), tx, 84);
     }
 
     if (this.switchOn !== undefined && this.switchOn !== null) {
-      const sw = 104;
-      const sh = 56;
-      const sx = this.w - sw;
-      const sy = (this.h - sh) / 2;
-      draw.fillRoundRect(ctx, sx, sy, sw, sh, sh / 2, this.switchOn ? 'rgba(232,200,122,0.16)' : 'rgba(255,255,255,0.06)');
-      draw.strokeRoundRect(ctx, sx, sy, sw, sh, sh / 2, this.switchOn ? 'rgba(232,200,122,0.5)' : COLOR.lineSoft, 1);
-      ctx.font = font(FONT.tiny, this.switchOn ? '600' : '');
-      ctx.fillStyle = this.switchOn ? COLOR.gold : COLOR.ink4;
-      ctx.textAlign = 'center';
-      ctx.fillText(this.switchOn ? '开' : '关', sx + sw / 2, sy + sh / 2 + 1);
-      ctx.textAlign = 'left';
+      // 统一成 iOS 开关：形状定义在 interactive.js ——
+      // "一个开关长什么样"不该在每个页面各画一遍
+      drawSwitchShape(ctx, this.w - this.swW, (this.h - this.swH) / 2, this.swW, this.swH, this.switchOn);
     } else if (this.dotState) {
       const colors = { ok: COLOR.green, warn: COLOR.gold, bad: COLOR.red, off: COLOR.ink4, idle: COLOR.ink4 };
       ctx.beginPath();
       ctx.arc(this.w - 12, this.h / 2, 8, 0, Math.PI * 2);
       ctx.fillStyle = colors[this.dotState] || COLOR.ink4;
       ctx.fill();
+    } else {
+      draw.chevron(ctx, this.w - 14, this.h / 2, 11, 'rgba(255,255,255,0.30)');
     }
   }
 }
@@ -133,29 +138,30 @@ class ProfileScene extends Scene {
       g.addColorStop(0, 'rgba(139,108,240,0.34)');
       g.addColorStop(1, 'rgba(232,200,122,0.14)');
       draw.fillRoundRect(ctx, 0, 0, 132, 132, 66, g);
-      draw.strokeRoundRect(ctx, 0, 0, 132, 132, 66, 'rgba(232,200,122,0.35)', 1);
       ctx.font = font(48, '600');
       ctx.fillStyle = COLOR.gold;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(this.profile && this.profile.name ? this.profile.name[0] : '✧', 66, 68);
       ctx.textAlign = 'left';
+      // 金色描边环：和账号页、首页的头像统一
+      draw.avatarRing(ctx, 66, 66, 70, 0, 0.8);
     };
     scroll.add(avatar);
 
     const nameX = pad + 160;
-    // 三行各自的 y：名字是 52px（行高 68），所以下面两行必须让开它的行框，
+    // 三行各自的 y：名字行高 68，所以下面两行必须让开它的行框，
     // 否则名字的下缘会和日期那行贴在一起（行高 68 却只隔 54px）。
     scroll.add(new Label({
       x: nameX, y: y + 10, w: W - nameX - pad, text: (this.profile && this.profile.name) || '无名旅人',
-      size: FONT.h1, weight: '600', color: COLOR.ink
+      size: FONT.h2, weight: '600', color: COLOR.ink
     }));
     scroll.add(new Label({
       x: nameX, y: y + 84, w: W - nameX - pad,
       text: this.profile
         ? `${this.profile.birthDate}${this.profile.timeKnown ? ` ${this.profile.birthTime}` : '（时辰未知）'} · ${placeLabel(this.profile)}`
         : copy.UI.profileNoData,
-      size: FONT.tiny, color: COLOR.ink2
+      size: FONT.tiny, color: COLOR.ink3
     }));
     scroll.add(new Label({
       x: nameX, y: y + 114, w: W - nameX - pad, text: this.chartLine, size: FONT.micro, color: COLOR.ink4
@@ -203,7 +209,7 @@ class ProfileScene extends Scene {
 
     if (!this.history.length) {
       const empty = new Card({ x: pad, y, w: contentW });
-      empty.add(new Paragraph({ x: 0, y: 0, w: contentW - 56, text: copy.UI.profileHistoryEmpty, size: FONT.small, color: COLOR.ink4 }));
+      empty.add(new Paragraph({ x: 0, y: 0, w: contentW - CARD.pad * 2, text: copy.UI.profileHistoryEmpty, size: FONT.small, color: COLOR.ink4 }));
       empty.fitHeight(0);
       scroll.add(empty);
       y += empty.h + 24;
@@ -213,7 +219,7 @@ class ProfileScene extends Scene {
       this.history.forEach((h, i) => {
         const c = CHARACTER_MAP[h.mainId];
         const rarity = c ? RARITY[c.rarity] : null;
-        const row = new Widget({ x: 0, y: hy, w: contentW - 56, h: 104 });
+        const row = new Widget({ x: 0, y: hy, w: contentW - CARD.pad * 2, h: 104 });
         row.drawSelf = (ctx) => {
           ctx.font = font(FONT.body);
           ctx.fillStyle = COLOR.ink;
@@ -225,16 +231,16 @@ class ProfileScene extends Scene {
           ctx.font = font(FONT.body, '600');
           ctx.fillStyle = COLOR.gold;
           ctx.textAlign = 'right';
-          ctx.fillText(`${h.resonance || 0}%`, contentW - 56, 34);
+          ctx.fillText(`${h.resonance || 0}%`, contentW - CARD.pad * 2, 34);
           ctx.font = font(FONT.micro);
           ctx.fillStyle = COLOR.ink4;
-          ctx.fillText(fmt.fromNow(h.at), contentW - 56, 74);
+          ctx.fillText(fmt.fromNow(h.at), contentW - CARD.pad * 2, 74);
           ctx.textAlign = 'left';
         };
         hisCard.add(row);
         hy += 104;
         if (i < this.history.length - 1) {
-          hisCard.add(new HLine({ x: 0, y: hy - 1, w: contentW - 56 }));
+          hisCard.add(new HLine({ x: 0, y: hy - 1, w: contentW - CARD.pad * 2 }));
         }
       });
       hisCard.content.h = hy;
@@ -262,7 +268,7 @@ class ProfileScene extends Scene {
     const setCard = new Card({ x: pad, y, w: contentW });
     let sy = 0;
     const aiRow = new SettingRow({
-      x: 0, y: sy, w: contentW - 56, title: copy.UI.profileAiSwitch, 
+      x: 0, y: sy, w: contentW - CARD.pad * 2, title: copy.UI.profileAiSwitch, icon: 'spark', 
       switchOn: this.settings.useAi,
       onTap: (self) => {
         const on = !this.settings.useAi;
@@ -274,11 +280,11 @@ class ProfileScene extends Scene {
       }
     });
     setCard.add(aiRow);
-    setCard.add(new HLine({ x: 0, y: sy + 117, w: contentW - 56 }));
-    sy += 118;
+    sy += aiRow.h;
+    setCard.add(new HLine({ x: 0, y: sy - 1, w: contentW - CARD.pad * 2 }));
 
     const hisRow = new SettingRow({
-      x: 0, y: sy, w: contentW - 56, title: copy.UI.profileSaveSwitch, 
+      x: 0, y: sy, w: contentW - CARD.pad * 2, title: copy.UI.profileSaveSwitch, icon: 'clock', 
       switchOn: this.settings.saveHistory,
       onTap: (self) => {
         const on = !this.settings.saveHistory;
@@ -289,12 +295,12 @@ class ProfileScene extends Scene {
       }
     });
     setCard.add(hisRow);
-    setCard.add(new HLine({ x: 0, y: sy + 117, w: contentW - 56 }));
-    sy += 118;
+    sy += hisRow.h;
+    setCard.add(new HLine({ x: 0, y: sy - 1, w: contentW - CARD.pad * 2 }));
 
     // 震动反馈：全局统一在 input.js 的 tap 分发里调，这里只管开关
     const vibRow = new SettingRow({
-      x: 0, y: sy, w: contentW - 56, title: copy.UI.profileVibration, 
+      x: 0, y: sy, w: contentW - CARD.pad * 2, title: copy.UI.profileVibration, icon: 'dots', 
       switchOn: this.settings.vibration !== false,
       onTap: (self) => {
         const on = this.settings.vibration === false;
@@ -305,11 +311,11 @@ class ProfileScene extends Scene {
       }
     });
     setCard.add(vibRow);
-    setCard.add(new HLine({ x: 0, y: sy + 117, w: contentW - 56 }));
-    sy += 118;
+    sy += vibRow.h;
+    setCard.add(new HLine({ x: 0, y: sy - 1, w: contentW - CARD.pad * 2 }));
 
     const backendRow = new SettingRow({
-      x: 0, y: sy, w: contentW - 56, title: copy.UI.profileBackend,
+      x: 0, y: sy, w: contentW - CARD.pad * 2, title: copy.UI.profileBackend, icon: 'info',
       // 这一行保留说明：它是**诊断信息**，不是产品文案 ——
       // AI 服务连不上时，用户（和开发者）需要知道连的是哪个地址、为什么不通。
       // ⚠️ 这里只能放**一行短字**（SettingRow 的 desc 不换行）：
@@ -319,7 +325,7 @@ class ProfileScene extends Scene {
       onTap: () => this.checkBackend()
     });
     setCard.add(backendRow);
-    sy += 118;
+    sy += backendRow.h;
     setCard.content.h = sy;
     setCard.fitHeight(0);
     scroll.add(setCard);
@@ -343,30 +349,30 @@ class ProfileScene extends Scene {
     let ay = 0;
     // 账号与登录放在最前：这是用户最容易困惑的地方（"我要不要注册？"）
     aboutCard.add(new SettingRow({
-      x: 0, y: ay, w: contentW - 56, title: copy.UI.accountTitle,
+      x: 0, y: ay, w: contentW - CARD.pad * 2, title: copy.UI.accountTitle, icon: 'user',
       
       onTap: () => this.stage.router.push('account')
     }));
-    ay += 118;
-    aboutCard.add(new HLine({ x: 0, y: ay - 1, w: contentW - 56 }));
+    ay += 108;
+    aboutCard.add(new HLine({ x: 0, y: ay - 1, w: contentW - CARD.pad * 2 }));
     aboutCard.add(new SettingRow({
-      x: 0, y: ay, w: contentW - 56, title: copy.UI.profileAbout, 
+      x: 0, y: ay, w: contentW - CARD.pad * 2, title: copy.UI.profileAbout, icon: 'shield', 
       onTap: () => this.showAbout()
     }));
-    ay += 118;
+    ay += 108;
     // 提审要求：应用内必须能随时访问协议全文（首启弹窗之外的第二入口）
-    aboutCard.add(new HLine({ x: 0, y: ay - 1, w: contentW - 56 }));
+    aboutCard.add(new HLine({ x: 0, y: ay - 1, w: contentW - CARD.pad * 2 }));
     aboutCard.add(new SettingRow({
-      x: 0, y: ay, w: contentW - 56, title: copy.UI.profileAgreement,
+      x: 0, y: ay, w: contentW - CARD.pad * 2, title: copy.UI.profileAgreement, icon: 'doc',
       onTap: () => this.showAgreement()
     }));
-    ay += 118;
-    aboutCard.add(new HLine({ x: 0, y: ay - 1, w: contentW - 56 }));
+    ay += 108;
+    aboutCard.add(new HLine({ x: 0, y: ay - 1, w: contentW - CARD.pad * 2 }));
     aboutCard.add(new SettingRow({
-      x: 0, y: ay, w: contentW - 56, title: copy.UI.profileClearAll, 
+      x: 0, y: ay, w: contentW - CARD.pad * 2, title: copy.UI.profileClearAll, icon: 'trash', 
       onTap: () => this.clearAll()
     }));
-    ay += 118;
+    ay += 108;
     aboutCard.content.h = ay;
     aboutCard.fitHeight(0);
     scroll.add(aboutCard);

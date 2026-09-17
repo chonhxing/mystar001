@@ -1,8 +1,9 @@
 # 我推的星运
 
-> 📌 四份必读文档：
+> 📌 五份必读文档：
 > **[docs/RELEASE-CHECKLIST.md](docs/RELEASE-CHECKLIST.md)** —— 发布流程、硬性要求、时间线（13~37 个工作日）
 > **[docs/COMPLIANCE.md](docs/COMPLIANCE.md)** —— 审核风险与逐条应对
+> **[docs/DESIGN.md](docs/DESIGN.md)** —— 视觉规范：设计令牌、动效、改界面的检查清单
 > **[docs/API-CHECKLIST.md](docs/API-CHECKLIST.md)** —— 920 个 API 逐类核对（在用/漏掉/以后可用）
 > **[docs/WHAT-I-NEED.md](docs/WHAT-I-NEED.md)** —— 需要你提供的东西
 

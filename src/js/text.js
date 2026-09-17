@@ -42,9 +42,25 @@ function getMeasureCtx() {
   return measureCtx;
 }
 
+/**
+ * 从字体串里取出字号。
+ *
+ * ⚠️ 不能用 `parseFloat(font)`：字体简写是 `700 52px sans-serif`，
+ *    parseFloat 会把**字重 700 当成字号**，估算出来的宽度直接大十几倍，
+ *    每段文字都被截成"…"（真机表现是大面积省略号，而且一条错误都没有）。
+ */
+function fontSizeOf(fontStr) {
+  const m = /(\d+(?:\.\d+)?)px/.exec(String(fontStr || ''));
+  if (m) {
+    const v = parseFloat(m[1]);
+    if (isFinite(v) && v > 0) return v;
+  }
+  return 16;
+}
+
 /** 没有真实 canvas 时的宽度估算（中文按 1em，西文按 0.55em） */
 function defaultMeasure(text) {
-  const size = parseFloat((this && this.font) || '16') || 16;
+  const size = fontSizeOf(this && this.font);
   let w = 0;
   for (let i = 0; i < String(text).length; i += 1) {
     w += CJK.test(text[i]) ? size : size * 0.55;

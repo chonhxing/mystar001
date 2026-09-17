@@ -1,6 +1,6 @@
 const { Widget } = require('./widget.js');
 const { Button } = require('./interactive.js');
-const { COLOR, FONT, font, RADIUS } = require('../theme.js');
+const { COLOR, FONT, font, RADIUS, EASE } = require('../theme.js');
 const draw = require('../draw.js');
 const text = require('../text.js');
 const copy = require('../../../config/copy.js');
@@ -63,6 +63,17 @@ class PriceCell extends Widget {
   }
 }
 
+/**
+ * 从底部弹起的距离。
+ *
+ * ⚠️ 位移**只画在 drawSelf 里**，不改控件的 y，也不让命中测试跟着动 ——
+ *    因为面板里的按钮分布在整块高度上（最后一个"以后再说"贴着底部），
+ *    如果让整体 y 跟着动画走，动画期间那些按钮的命中区就被推到屏幕外了：
+ *    用户（和测试）按"看得见的位置"点会点空。这里改成
+ *    "视觉先滑进来、一碰就落位"，两者永远不会不一致。
+ */
+const SLIDE = 72;
+
 class UnlockSheet extends Widget {
   constructor(opts) {
     super(opts);
@@ -79,19 +90,42 @@ class UnlockSheet extends Widget {
     this.scene = null;
     this.resolve_ = null;
     this.cells = [];
+    /** 入场进度 0 → 1；slide 是当前的下滑量（只影响绘制） */
+    this.anim = 0;
+    this.slide = SLIDE;
     this.buildLayout();
   }
 
   /** 高度按内容算，之后改档位数或文案都不会错位 */
   buildLayout() {
-    this.headerH = 128;
+    this.headerH = 196;
     this.adBtnH = 96;
     this.hasBuyArea = this.payUsable && this.products.length > 0;
-    this.buyAreaH = this.hasBuyArea ? 92 + 196 + 92 : 96;
-    this.footerH = 96 + (this.stage_ ? this.stage_.safeBottom : 0);
-    this.sheetH = this.headerH + this.adBtnH + 32 + this.buyAreaH + this.footerH;
+    // 付费区：分隔行 + 档位格 + 开通按钮 + 下方留白；不可付费时只留一行说明
+    this.buyAreaH = this.hasBuyArea ? 44 + 176 + 24 + 88 + 24 : 64;
+    this.laterH = 92;
+    this.footerH = (this.stage_ ? this.stage_.safeBottom : 0) + 8;
+    this.sheetH = this.headerH + this.adBtnH + 28 + this.buyAreaH + this.laterH + this.footerH;
     this.sheetTop = this.h - this.sheetH;
     this.build();
+  }
+
+  update(dt) {
+    if (this.anim >= 1) return this.updatePress(dt) || false;
+    this.anim = Math.min(1, this.anim + dt / 250);
+    this.slide = (1 - EASE.outCubic(this.anim)) * SLIDE;
+    return true;
+  }
+
+  /** 一碰就落位：动画只值 0.25 秒，与其让用户"点了个还没到位的东西"，不如直接收掉 */
+  settleAnim() {
+    this.anim = 1;
+    this.slide = 0;
+  }
+
+  settle() {
+    this.settleAnim();
+    return super.settle();
   }
 
   build() {
@@ -101,15 +135,16 @@ class UnlockSheet extends Widget {
     const cw = this.w - pad * 2;
     let y = this.headerH;
 
+    // 主路径：看广告换一次。放在最显眼的位置、给主按钮样式、整行全宽
     this.adBtn = new Button({
-      x: pad, y, w: cw, text: copy.UI.unlockByAd, variant: 'primary',
+      x: pad, y, w: cw, h: this.adBtnH, text: copy.UI.unlockByAd, variant: 'primary',
       onTap: () => this.byAd()
     });
     this.add(this.adBtn);
-    y += this.adBtnH + 32;
+    y += this.adBtnH + 28;
 
     if (this.hasBuyArea) {
-      y += 30; // 给"或 开通畅玩卡"那行留位置
+      y += 44;
       const gap = 16;
       const cellW = Math.floor((cw - gap * (this.products.length - 1)) / this.products.length);
       this.products.forEach((p, i) => {
@@ -121,70 +156,87 @@ class UnlockSheet extends Widget {
         this.cells.push(cell);
         this.add(cell);
       });
-      y += 196;
+      y += 176 + 24;
 
       this.buyBtn = new Button({
-        x: pad, y, w: cw, text: copy.UI.unlockBuy, variant: 'ghost',
+        x: pad, y, w: cw, h: 88, text: copy.UI.unlockBuy, variant: 'ghost',
         onTap: () => this.buy()
       });
       this.buyBtn.setEnabled(!!this.selectedId);
       this.add(this.buyBtn);
-      y += 92;
+      y += 88 + 24;
+    } else {
+      // 付费不可用时给一句明确说明，免得用户以为我们把入口藏起来了
+      this.noteText = CONFIG.PAY && CONFIG.PAY.ENABLED ? copy.UI.unlockNoPay : copy.UI.unlockPayOff;
+      y += this.buyAreaH;
     }
 
+    // 次级出路：一行灰字，不是第二个按钮。
+    // 两个药丸按钮并排会让用户以为它们平级，分不清主次（用户直接点名过这个问题）。
     this.add(new Button({
-      x: pad, y: y + 16, w: cw, text: copy.UI.unlockLater, variant: 'plain', small: true,
+      x: pad, y: this.sheetTop + this.sheetH - this.footerH - this.laterH,
+      w: cw, h: this.laterH - 12, variant: 'text', small: true, size: FONT.body,
+      text: copy.UI.unlockLater,
       onTap: () => this.finish({ ok: false, reason: 'LATER' })
     }));
   }
 
   drawSelf(ctx) {
     ctx.save();
-    ctx.fillStyle = 'rgba(6,5,18,0.72)';
-    ctx.fillRect(0, 0, this.w, this.sheetTop);
+    // 遮罩加深到 78%：以前 72% 时下层的表单还隐约可见，
+    // 用户会觉得"弹层和页面内容叠在一起，逻辑混乱"
+    ctx.fillStyle = 'rgba(6,5,18,0.78)';
+    ctx.fillRect(0, 0, this.w, this.sheetTop + this.slide + 2);
 
+    ctx.translate(0, this.slide);
     draw.fillRoundRect(ctx, 0, this.sheetTop, this.w, this.sheetH, RADIUS.xl, '#15122E');
-    draw.hairline(ctx, 24, this.sheetTop, this.w - 24, 'rgba(232,200,122,0.18)');
+    draw.hairline(ctx, 24, this.sheetTop, this.w - 24, 'rgba(232,200,122,0.20)');
 
     const pad = 32;
+    const cx = this.w / 2;
     ctx.textBaseline = 'middle';
-    ctx.textAlign = 'left';
+    ctx.textAlign = 'center';
 
-    let ty = this.sheetTop + 46;
+    // 顶端一颗星：这页讲的是"再来一次"，用星形当视觉锚点
+    const icY = this.sheetTop + 54;
+    draw.radialGlow(ctx, cx, icY, 62, 'rgba(232,200,122,0.22)', 1);
+    draw.sparkle(ctx, cx, icY, 20, COLOR.gold);
+    ctx.globalAlpha *= 0.35;
+    ctx.strokeStyle = COLOR.gold;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx, icY, 32, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha /= 0.35;
+
     ctx.font = font(FONT.h2, '700');
-    ctx.fillStyle = COLOR.gold;
-    ctx.fillText(copy.UI.unlockTitle, pad, ty);
-    ty += 46;
-
-    // 当前状态比"还剩几次"信息量更大
+    ctx.fillStyle = COLOR.ink;
+    ctx.fillText(copy.UI.unlockTitle, cx, this.sheetTop + 112);
     ctx.font = font(FONT.small);
     ctx.fillStyle = COLOR.ink3;
-    ctx.fillText(entitlement.summary().statusText, pad, ty);
+    ctx.fillText(copy.UI.unlockSub, cx, this.sheetTop + 160);
 
-    const divY = this.sheetTop + this.headerH + this.adBtnH + 32 + 14;
+    const divY = this.sheetTop + this.headerH + this.adBtnH + 28 + (this.hasBuyArea ? 22 : 32);
     if (this.hasBuyArea) {
       ctx.font = font(FONT.tiny);
       ctx.fillStyle = COLOR.ink4;
-      ctx.textAlign = 'center';
-      ctx.fillText(copy.UI.unlockOrBuy, this.w / 2, divY);
-      ctx.textAlign = 'left';
-      draw.hairline(ctx, pad, divY, this.w / 2 - 90, 'rgba(255,255,255,0.10)');
-      draw.hairline(ctx, this.w / 2 + 90, divY, this.w - pad, 'rgba(255,255,255,0.10)');
+      ctx.fillText(copy.UI.unlockOrBuy, cx, divY);
+      draw.hairline(ctx, pad, divY, cx - 90, 'rgba(255,255,255,0.10)');
+      draw.hairline(ctx, cx + 90, divY, this.w - pad, 'rgba(255,255,255,0.10)');
     } else {
-      // 给一句解释，免得用户以为我们把付费入口藏起来了
       ctx.font = font(FONT.micro);
-      ctx.fillStyle = COLOR.ink4;
-      const msg = CONFIG.PAY && CONFIG.PAY.ENABLED ? copy.UI.unlockNoPay : copy.UI.unlockPayOff;
-      ctx.fillText(text.singleLine(msg, this.w - pad * 2, font(FONT.micro)), pad, divY + 20);
+      ctx.fillStyle = COLOR.ink3;
+      ctx.fillText(text.singleLine(this.noteText, this.w - pad * 2, font(FONT.micro)), cx, divY);
     }
+    ctx.textAlign = 'left';
 
     if (this.busy) {
-      ctx.fillStyle = 'rgba(11,10,31,0.84)';
+      ctx.fillStyle = 'rgba(11,10,31,0.86)';
       ctx.fillRect(0, this.sheetTop, this.w, this.sheetH);
       ctx.textAlign = 'center';
       ctx.font = font(FONT.h3);
       ctx.fillStyle = COLOR.gold;
-      ctx.fillText(this.busyText || copy.UI.unlockChecking, this.w / 2, this.sheetTop + this.sheetH / 2);
+      ctx.fillText(this.busyText || copy.UI.unlockChecking, cx, this.sheetTop + this.sheetH / 2);
       ctx.textAlign = 'left';
     }
     ctx.restore();
@@ -194,6 +246,7 @@ class UnlockSheet extends Widget {
   hitTest(x, y, loose) {
     if (!this.visible) return null;
     if (loose ? !this.containsPadded(x, y) : !this.contains(x, y)) return null;
+    if (this.anim < 1) this.settleAnim(); // 用户碰了 = 动画结束（见 SLIDE 的说明）
     if (this.busy) return this;
     for (let i = this.children.length - 1; i >= 0; i -= 1) {
       const c = this.children[i];

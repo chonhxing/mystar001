@@ -1,4 +1,4 @@
-const { COLOR } = require('./theme.js');
+const { COLOR, font } = require('./theme.js');
 
 /**
  * 绘图原语。所有"好看的形状"都在这里，场景代码里不该出现裸的 path 拼接。
@@ -338,6 +338,381 @@ function avatar(ctx, img, cx, cy, radius) {
   return true;
 }
 
+/**
+ * 主按钮的金色渐变（linear-gradient(180deg, #F0D695, #D9B45F)）。
+ * 之前的对角渐变在长按钮上会显得"一边亮一边暗"，竖直渐变才是正常的金属感。
+ */
+function goldGrad(ctx, x, y, w, h) {
+  const g = ctx.createLinearGradient(num(x), num(y), num(x), num(y) + num(h));
+  g.addColorStop(0, COLOR.goldTop || '#F0D695');
+  g.addColorStop(1, COLOR.goldBottom || '#D9B45F');
+  return g;
+}
+
+/** 顶部 1px 高光：金属按钮"不塌"的关键，少这一笔就成一块死平的黄 */
+function topHighlight(ctx, x, y, w, r, alpha) {
+  ctx.save();
+  ctx.globalAlpha *= alpha === undefined ? 0.55 : alpha;
+  ctx.beginPath();
+  ctx.moveTo(num(x) + num(r) * 0.7, num(y) + 1.5);
+  ctx.lineTo(num(x) + num(w) - num(r) * 0.7, num(y) + 1.5);
+  ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+  ctx.lineWidth = 1.4;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * 星级：实心金 + 空心灰并排。
+ * 返回整行的宽度，方便调用方右对齐（自己算宽度容易差一颗星的位置）。
+ */
+function starsRow(ctx, x, y, size, filled, total, gap) {
+  const n = Math.max(0, Math.round(total === undefined ? 5 : total));
+  const f = Math.max(0, Math.min(n, Math.round(filled || 0)));
+  const g = gap === undefined ? size * 1.15 : gap;
+  for (let i = 0; i < n; i += 1) {
+    star(ctx, num(x) + i * g, num(y), size, i < f ? COLOR.gold : 'rgba(255,255,255,0.20)', i < f);
+  }
+  return n > 0 ? (n - 1) * g + size * 2 : 0;
+}
+
+/** 星形四角光点（✦）。未遇见的角色占位、解锁面板顶端都用它 */
+function sparkle(ctx, cx, cy, r, color, alpha) {
+  const R = Math.max(1, num(r));
+  ctx.save();
+  ctx.globalAlpha *= alpha === undefined ? 1 : alpha;
+  ctx.fillStyle = color || COLOR.gold;
+  ctx.beginPath();
+  // 四个尖 + 内收的腰，比五角星更"光点"
+  for (let i = 0; i < 8; i += 1) {
+    const rad = i % 2 === 0 ? R : R * 0.24;
+    const a = (Math.PI / 4) * i - Math.PI / 2;
+    const px = num(cx) + Math.cos(a) * rad;
+    const py = num(cy) + Math.sin(a) * rad;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+/**
+ * 圆形印章（「吉」那种）。
+ * 双圈 + 正中一个字，比一行"★★★★☆ 顺畅"有玄学味得多。
+ */
+function seal(ctx, cx, cy, r, label, color, alpha) {
+  const R = Math.max(6, num(r));
+  const c = color || COLOR.gold;
+  ctx.save();
+  ctx.globalAlpha *= alpha === undefined ? 1 : alpha;
+  ctx.strokeStyle = c;
+  ctx.lineWidth = Math.max(1, R * 0.075);
+  ctx.beginPath();
+  ctx.arc(num(cx), num(cy), R, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.globalAlpha *= 0.55;
+  ctx.lineWidth = Math.max(0.8, R * 0.045);
+  ctx.beginPath();
+  ctx.arc(num(cx), num(cy), R * 0.82, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.globalAlpha /= 0.55;
+  if (label) {
+    const s = String(label);
+    // 两个字（"大吉"/"小吉"/"末吉"）要收一档字号，否则会顶出印章
+    const size = s.length >= 2 ? R * 0.62 : R * 0.82;
+    ctx.font = font(size, '700');
+    ctx.fillStyle = c;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(s, num(cx), num(cy) + R * 0.04);
+    ctx.textAlign = 'left';
+  }
+  ctx.restore();
+}
+
+/**
+ * 引号装饰（金色「“」）。
+ *
+ * 刻意**画成图形而不是写字**：一是引号在小游戏 Canvas 上字形不稳，
+ * 二是文字会被布局审计当成一段真文字去比对重叠——装饰不该参与排版。
+ */
+function quoteMark(ctx, x, y, size, color, alpha) {
+  const S = Math.max(8, num(size));
+  ctx.save();
+  ctx.globalAlpha *= alpha === undefined ? 0.3 : alpha;
+  ctx.strokeStyle = color || COLOR.gold;
+  ctx.lineWidth = S * 0.30;
+  ctx.lineCap = 'round';
+  for (let i = 0; i < 2; i += 1) {
+    const cx = num(x) + S * 0.46 + i * S * 0.98;
+    const cy = num(y) + S * 0.52;
+    ctx.beginPath();
+    ctx.arc(cx, cy, S * 0.28, Math.PI * 0.72, Math.PI * 2.06);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/**
+ * 星座连线装饰：几个定点用细线连起来，再在顶点上点小星。
+ * 确定性伪随机 —— 同一个 seed 每次都是同一张图，不会每帧闪。
+ */
+function constellation(ctx, x, y, w, h, seed, alpha, count) {
+  const n = Math.max(3, count || 5);
+  const pts = [];
+  for (let i = 0; i < n; i += 1) {
+    const a = Math.sin((i + 1) * 12.9898 + (seed || 0) * 3.7) * 43758.5453;
+    const b = Math.sin((i + 1) * 78.233 + (seed || 0) * 1.3) * 12345.6789;
+    pts.push({
+      x: num(x) + (a - Math.floor(a)) * num(w),
+      y: num(y) + (b - Math.floor(b)) * num(h)
+    });
+  }
+  ctx.save();
+  ctx.globalAlpha *= alpha === undefined ? 0.10 : alpha;
+  ctx.strokeStyle = COLOR.gold;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  pts.forEach((p, i) => {
+    if (i === 0) ctx.moveTo(p.x, p.y);
+    else ctx.lineTo(p.x, p.y);
+  });
+  // 收尾连回起点附近的点，让连线闭合一点，像真的星座
+  if (pts.length > 3) ctx.lineTo(pts[1].x, pts[1].y);
+  ctx.stroke();
+  pts.forEach((p, i) => {
+    ctx.fillStyle = i % 3 === 0 ? COLOR.cyan : '#FFFFFF';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, i % 3 === 0 ? 1.8 : 1.2, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.restore();
+}
+
+/**
+ * 流星。每颗流星有自己的周期（默认 9~16 秒一颗），
+ * 只在周期前 1/5 的时间可见 —— 大部分时候天上什么都没有才是对的。
+ */
+function meteor(ctx, w, h, t, seed) {
+  const s = seed || 0;
+  const period = 11000 + (s % 5) * 1400;
+  const phase = ((num(t) + s * 3700) % period) / period;
+  if (phase > 0.20) return;
+  const p = phase / 0.20; // 0~1 划过过程
+  const fromX = num(w) * (0.12 + ((s * 37) % 60) / 100);
+  const fromY = num(h) * (0.04 + ((s * 17) % 28) / 100);
+  const len = num(w) * 0.34;
+  const x = fromX + len * p * 1.4;
+  const y = fromY + len * p * 0.62;
+  const fade = Math.sin(p * Math.PI); // 头尾淡入淡出
+  ctx.save();
+  ctx.globalAlpha *= 0.75 * fade;
+  const g = ctx.createLinearGradient(x, y, x - len * 0.5, y - len * 0.22);
+  g.addColorStop(0, 'rgba(255,255,255,0.95)');
+  g.addColorStop(0.35, 'rgba(232,200,122,0.55)');
+  g.addColorStop(1, 'rgba(232,200,122,0)');
+  ctx.strokeStyle = g;
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x - len * 0.5, y - len * 0.22);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** 统一的右箭头。以前每个控件各画一遍，粗细角度都不一样 */
+function chevron(ctx, x, y, size, color) {
+  const S = Math.max(4, num(size));
+  ctx.save();
+  ctx.strokeStyle = color || 'rgba(255,255,255,0.30)';
+  ctx.lineWidth = Math.max(1.5, S * 0.18);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(num(x), num(y) - S * 0.6);
+  ctx.lineTo(num(x) + S * 0.6, num(y));
+  ctx.lineTo(num(x), num(y) + S * 0.6);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** 虚线圆角框（"+ 新建资料卡"那种"添加"暗示） */
+function dashedRoundRect(ctx, x, y, w, h, r, color, dash, gap) {
+  if (num(w) <= 0 || num(h) <= 0) return;
+  ctx.save();
+  if (ctx.setLineDash) ctx.setLineDash([num(dash, 10), num(gap, 8)]);
+  roundRectPath(ctx, x, y, w, h, r);
+  ctx.strokeStyle = color || 'rgba(255,255,255,0.20)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  if (ctx.setLineDash) ctx.setLineDash([]);
+  ctx.restore();
+}
+
+/**
+ * 选项字母徽章（A / B / C）。
+ * 选中态是"金底黑字"，未选中是"描边 + 灰字" —— 对比度一下子拉开了。
+ */
+function letterBadge(ctx, cx, cy, r, letter, on, color) {
+  const R = Math.max(6, num(r));
+  const c = color || COLOR.gold;
+  ctx.save();
+  if (on) {
+    drawFillCircle(ctx, cx, cy, R, c);
+    ctx.fillStyle = '#2A1E05';
+  } else {
+    ctx.beginPath();
+    ctx.arc(num(cx), num(cy), R, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = COLOR.ink3;
+  }
+  ctx.font = font(R * 1.02, '700');
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(String(letter || ''), num(cx), num(cy) + 1);
+  ctx.textAlign = 'left';
+  ctx.restore();
+}
+
+function drawFillCircle(ctx, cx, cy, r, fill) {
+  ctx.beginPath();
+  ctx.arc(num(cx), num(cy), num(r), 0, Math.PI * 2);
+  ctx.fillStyle = fill;
+  ctx.fill();
+}
+
+/**
+ * 未解锁的占位：一个虚线圆 + 中间的 ✦。
+ * 以前这里画的是问号 —— 那个符号读起来像"你答错了"，
+ * 而收集类页面的空位应该是"还等着你去遇见"。
+ */
+function starPlaceholder(ctx, cx, cy, r, color) {
+  const R = Math.max(6, num(r));
+  const c = color || 'rgba(255,255,255,0.30)';
+  ctx.save();
+  ctx.strokeStyle = c;
+  ctx.lineWidth = 1.5;
+  if (ctx.setLineDash) ctx.setLineDash([5, 6]);
+  ctx.beginPath();
+  ctx.arc(num(cx), num(cy), R, 0, Math.PI * 2);
+  ctx.stroke();
+  if (ctx.setLineDash) ctx.setLineDash([]);
+  sparkle(ctx, cx, cy, R * 0.52, c, 1);
+  ctx.restore();
+}
+
+/** 六边形（加载态、头像框）：可旋转，可只描边 */
+function hexRing(ctx, cx, cy, r, rot, color, lineWidth) {
+  const R = Math.max(4, num(r));
+  ctx.save();
+  ctx.strokeStyle = color || COLOR.gold;
+  ctx.lineWidth = num(lineWidth, 2);
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  for (let i = 0; i <= 6; i += 1) {
+    const a = (Math.PI / 3) * i + num(rot);
+    const px = num(cx) + Math.cos(a) * R;
+    const py = num(cy) + Math.sin(a) * R;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** 头像的金色渐变描边环（用户头像、资料卡头像统一用它） */
+function avatarRing(ctx, cx, cy, r, t, alpha) {
+  const R = Math.max(4, num(r));
+  ctx.save();
+  ctx.globalAlpha *= alpha === undefined ? 1 : alpha;
+  const g = ctx.createLinearGradient(num(cx) - R, num(cy) - R, num(cx) + R, num(cy) + R);
+  g.addColorStop(0, COLOR.gold);
+  g.addColorStop(0.45, 'rgba(232,200,122,0.45)');
+  g.addColorStop(1, COLOR.goldLight);
+  ctx.strokeStyle = g;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(num(cx), num(cy), R, 0, Math.PI * 2);
+  ctx.stroke();
+  // 顶上再加一小段高光，环就"活"了
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+  ctx.lineWidth = 2;
+  const a0 = -Math.PI * 0.86 + Math.sin(num(t) / 2600) * 0.4;
+  ctx.beginPath();
+  ctx.arc(num(cx), num(cy), R, a0, a0 + 0.5);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * 稀有度描边光效：一道本色细边 + 一圈外扩渐隐光晕。
+ * 收集类页面的核心爽点就是"一眼看出哪张卡稀有"。
+ */
+function rarityEdge(ctx, x, y, w, h, r, color, strength) {
+  const a = strength === undefined ? 1 : strength;
+  if (a <= 0) return;
+  ctx.save();
+  ctx.globalAlpha *= a;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 18;
+  roundRectPath(ctx, x, y, w, h, r);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+  // 顶部再补一层内发光，让边框有厚度
+  const g = ctx.createLinearGradient(0, num(y), 0, num(y) + num(h) * 0.5);
+  g.addColorStop(0, color);
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.globalAlpha *= 0.16;
+  roundRectPath(ctx, x, y, w, h, r);
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.restore();
+}
+
+/**
+ * 带流光的进度条。
+ * `flow` 是一道从左到右循环的高光 —— 结果页那条"81%"用它撑场面。
+ */
+function flowBar(ctx, x, y, w, h, value, t, opts) {
+  const o = opts || {};
+  const H = num(h, 8);
+  const W = num(w);
+  const p = Math.max(0, Math.min(1, num(value)));
+  fillRoundRect(ctx, x, y, W, H, H / 2, o.track || 'rgba(255,255,255,0.08)');
+  const fw = Math.max(0, W * p);
+  if (fw < 1) return;
+  const g = ctx.createLinearGradient(num(x), 0, num(x) + W, 0);
+  g.addColorStop(0, o.from || COLOR.violet);
+  g.addColorStop(1, o.to || COLOR.gold);
+  fillRoundRect(ctx, x, y, fw, H, H / 2, g);
+  if (o.flow !== false) {
+    // 流光只在前 62% 的行程里跑，跑完有一段"休息"，比一直在跑自然
+    const cycle = (num(t) / 2200) % 1.6;
+    if (cycle < 1) {
+      const fx = num(x) + fw * cycle;
+      const g2 = ctx.createLinearGradient(fx - 60, 0, fx + 30, 0);
+      g2.addColorStop(0, 'rgba(255,255,255,0)');
+      g2.addColorStop(0.7, 'rgba(255,255,255,0.55)');
+      g2.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.save();
+      ctx.beginPath();
+      roundRectPath(ctx, x, y, fw, H, H / 2);
+      ctx.clip();
+      ctx.fillStyle = g2;
+      ctx.fillRect(fx - 60, num(y), 90, H);
+      ctx.restore();
+    }
+  }
+}
+
 module.exports = {
   emblem,
   avatar,
@@ -353,5 +728,23 @@ module.exports = {
   radialGlow,
   hslToRgba,
   drawImageCover,
-  hairline
+  hairline,
+  // ---- 美化轮新增 ----
+  goldGrad,
+  topHighlight,
+  starsRow,
+  sparkle,
+  starPlaceholder,
+  seal,
+  quoteMark,
+  constellation,
+  meteor,
+  chevron,
+  dashedRoundRect,
+  letterBadge,
+  drawFillCircle,
+  hexRing,
+  avatarRing,
+  rarityEdge,
+  flowBar
 };

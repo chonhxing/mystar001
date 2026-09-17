@@ -923,7 +923,6 @@ let stageRef = null;
 
     const timeRow = find(home.root, (w) => w.label && w.label.indexOf('出生时辰') >= 0);
     ok(!!timeRow, '找到"出生时辰"行');
-    ok(timeRow.rightPad > 0, '时辰行给右侧按钮让出了宽度，值不会压到按钮上');
     {
       // 这一页出过一次文字重叠的事故，所以布局也用断言钉住。
       // ⚠️ 必须重新找控件：上面的 persist() 会重建整棵控件树，早先找到的按钮已经不在树里了。
@@ -931,10 +930,14 @@ let stageRef = null;
       ok(!!btn, '重建后「不知道」按钮还在');
       const bp = absoluteOf(btn);
       const rp = absoluteOf(timeRow);
-      ok(bp.x >= rp.x + timeRow.w - timeRow.rightPad - 1,
-        `「不知道」按钮落在右侧预留区里（按钮 x=${Math.round(bp.x)}，预留区起点=${Math.round(rp.x + timeRow.w - timeRow.rightPad)}）`);
-      ok(bp.x + btn.w <= rp.x + timeRow.w - 10, '按钮不越过行尾，给箭头留了位置');
+      ok(bp.x > rp.x + timeRow.w * 0.5,
+        `「不知道」在行的右半边（按钮 x=${Math.round(bp.x)}，行中点=${Math.round(rp.x + timeRow.w / 2)}）`);
+      ok(bp.x + btn.w <= rp.x + timeRow.w - 18, '按钮不越过行尾，给箭头留了位置');
       ok(bp.y >= rp.y && bp.y + btn.h <= rp.y + timeRow.h, '按钮高度在这一行内，不会压到下一行');
+      // 行尾动作必须是**这一行的子控件**（自己画一段字再叠热区的话，
+      // 控件树里就没有"这个动作"，测试和无障碍都找不到它）
+      ok(btn.parent === timeRow || (timeRow.children || []).indexOf(btn) >= 0,
+        '行尾动作是这一行的子控件');
     }
     tapWidget(timeRow);
     await sleep(20);
@@ -1034,8 +1037,10 @@ let stageRef = null;
   // ---- 题量选择器：10 / 20 / 30 / 50 ----
   {
     const storageMod = require(path.join(ROOT, 'utils/storage.js'));
+    // Segmented 的 items 现在是 {label, icon}（图标可选），所以按 label 找
+    const labelOf = (it) => (it && it.label !== undefined ? it.label : String(it));
     const seg = find(home.root, (w) => w.items && w.items.length === 4
-      && String(w.items[0]).indexOf('题') >= 0);
+      && String(labelOf(w.items[0])).indexOf('题') >= 0);
     ok(!!seg, '首页有题量选择器');
     ok(home.quizCount === 10, `默认 10 题（实际 ${home.quizCount}）`);
     // 点第二格 = 20 题
@@ -2687,6 +2692,19 @@ let stageRef = null;
 
     function auditScene(scene, label, opts) {
       const o = opts || {};
+      /**
+       * 审计的是**静止态**的布局。
+       *
+       * 场景有入场动画（内容整体从下方 20px 滑上来、卡片缩放、共振数字滚动）。
+       * 测试里的 step() 走的是真实时间差，几乎为 0，所以动画不会自己跑完 ——
+       * 必须显式把它们推到终点再量，否则量到的是"半路"的坐标：
+       * 那既不是用户看到的最终画面，也会和 absoluteOf()（不含动画位移）
+       * 算出来的卡片位置对不上，凭空报出一堆"空卡片"。
+       */
+      if (scene.settle) {
+        scene.settle();
+        step(1);
+      }
       // 只审**真正可见**的文字：被滚动容器裁掉的（滚出视口的部分）不算，
       // 它们本来就不该显示，和 TabBar 比出重叠是假问题。
       const ops = frameOps().filter((x) => x[0] === 'text' && x[8] !== false);
@@ -2925,6 +2943,313 @@ let stageRef = null;
     step(1);
     ok(!errview.get(), '换页后错误卡自动清掉');
     ok(countText(stage.canvas._ops) > 5, '首页恢复正常渲染');
+  }
+
+  // ------------------------------------------------------------ 设计规范
+  section('19. 设计规范与新增组件（字号/卡片/动效/图标）');
+  {
+    const theme = require(path.join(ROOT, 'src/js/theme.js'));
+    const widgetMod = require(path.join(ROOT, 'src/js/ui/widget.js'));
+    const interactMod = require(path.join(ROOT, 'src/js/ui/interactive.js'));
+    const iconMod = require(path.join(ROOT, 'src/js/ui/icon.js'));
+    const storageMod = require(path.join(ROOT, 'utils/storage.js'));
+    const { CHARACTERS } = require(path.join(ROOT, 'data/characters.js'));
+
+    // ---- 卡片统一规格：圆角/内边距/底色/描边都从令牌来 ----
+    {
+      const card = new widgetMod.Card({ x: 0, y: 0, w: 600, h: 200 });
+      ok(card.radius === theme.CARD.radius, `卡片圆角统一（${card.radius}）`);
+      ok(card.pad === theme.CARD.pad, `卡片内边距统一（${card.pad}）`);
+      ok(card.fill === theme.CARD.fill, '卡片底色统一走令牌');
+      ok(card.content.w === 600 - theme.CARD.pad * 2,
+        `卡片内容宽度 = 外宽 - 2×内边距（${card.content.w}）`);
+      // 字号必须全是整数（真机会静默忽略小数号）
+      const badFonts = Object.keys(theme.FONT).filter((k) => !Number.isInteger(theme.FONT[k]));
+      ok(badFonts.length === 0, `字号全为整数（问题项：${badFonts.join(',') || '无'}）`);
+      // 文字四档必须真的拉开，正文不能和辅助一样暗
+      const lum = (hex) => {
+        const m = /^#(\w\w)(\w\w)(\w\w)$/.exec(hex);
+        return m ? (parseInt(m[1], 16) + parseInt(m[2], 16) + parseInt(m[3], 16)) / 3 : 0;
+      };
+      const l = [theme.COLOR.ink, theme.COLOR.ink2, theme.COLOR.ink3, theme.COLOR.ink4].map(lum);
+      ok(l[0] > l[1] && l[1] > l[2] && l[2] > l[3], '文字四档亮度严格递减');
+    }
+
+    // ---- 入场动画：新场景从 0 开始，settle 后落位；动画期间点击不受影响 ----
+    {
+      router.reset('home');
+      await sleep(30);
+      step(1);
+      const sc = router.current();
+      ok(sc.enterT < 1, `新场景有入场动画（enterT=${sc.enterT.toFixed(2)}）`);
+      // 动画中途点按钮：命中测试用的是控件坐标，不会跟着动画跑。
+      // ⚠️ 先把它滚进视口 —— 滚动容器外的点本来就该点不到（那是另一回事）。
+      const startBtn = find(sc.root, (w) => w.text === copy.UI.homeStart);
+      ok(!!startBtn, '首页有开始按钮');
+      ensureVisible(startBtn);
+      const sp = absoluteOf(startBtn);
+      const hit = sc.hitTest(sp.x + startBtn.w / 2, sp.y + startBtn.h / 2);
+      ok(!!hit && (hit === startBtn || startBtn.children.indexOf(hit) >= 0),
+        '入场动画期间点按钮也能命中（视觉和命中不会错位）');
+      sc.settle();
+      ok(sc.enterT === 1, 'settle() 把动画推到终点');
+      step(1);
+    }
+
+    // ---- 解锁面板：主按钮整行 + 次级是一行灰字 ----
+    {
+      const { UnlockSheet } = require(path.join(ROOT, 'src/js/ui/unlock.js'));
+      const sheet = new UnlockSheet({
+        x: 0, y: 0, w: stage.width, h: stage.height, stage, payUsable: false, products: []
+      });
+      ok(sheet.adBtn.variant === 'primary', '看广告是主按钮（金色渐变）');
+      ok(sheet.adBtn.w === stage.width - 64, `主按钮整行宽（${sheet.adBtn.w}）`);
+      ok(sheet.adBtn.h === 96, `主按钮高度 48px 当量（${sheet.adBtn.h}）`);
+      const later = find(sheet, (w) => w.text === copy.UI.unlockLater);
+      ok(!!later && later.variant === 'text', '"以后再说"是纯文字按钮（不和主按钮平级）');
+      ok(!find(sheet, (w) => w.constructor.name === 'PriceCell'), '支付不可用时不显示价格档位');
+      // 一碰就落位：动画只影响绘制，命中测试不受影响
+      sheet.anim = 0;
+      sheet.slide = 999;
+      const lp = absoluteOf(later);
+      const hitBtn = sheet.hitTest(lp.x + later.w / 2, lp.y + later.h / 2);
+      ok(!!hitBtn && sheet.slide === 0, '碰到面板时入场动画立即落位（不会点到"还没滑到位"的按钮）');
+    }
+
+    // ---- 图鉴：计数器 40 / 60 与筛选数量角标 ----
+    {
+      router.reset('codex');
+      await sleep(30);
+      step(1);
+      const sc = router.current();
+      sc.settle();
+      step(1);
+      const texts = stage.canvas._ops
+        .filter((o) => o[0] === 'text' && typeof o[1] === 'string')
+        .map((o) => o[1]);
+      const joined = texts.join('|');
+      ok(joined.indexOf(`/ ${CHARACTERS.length}`) >= 0, `计数器显示总数（/ ${CHARACTERS.length}）`);
+      ok(texts.indexOf(String(sc.unlockedCount)) >= 0, `计数器显示已遇见数（${sc.unlockedCount}）`);
+      const chips = findAll(sc.root, (w) => w.constructor.name === 'Chip');
+      ok(chips.length >= 8, `两行筛选胶囊都在（${chips.length} 个）`);
+      ok(chips.every((c) => typeof c.count === 'number'), '每个筛选胶囊都有数量角标');
+      const legendChip = chips.find((c) => c.label === '传说');
+      ok(!!legendChip && legendChip.count === CHARACTERS.filter((c) => c.rarity === 'legend').length,
+        `传说筛选的数量对得上（${legendChip && legendChip.count}）`);
+      // 稀有度光效强度必须真的分档，否则"稀有"就不稀有
+      const cardMod = require(path.join(ROOT, 'src/js/ui/game.js'));
+      const mk = (rarity, locked) => new cardMod.CharCard({ x: 0, y: 0, w: 320, h: 300, char: { id: 'x', name: 'n', rarity }, rarityKey: rarity, locked });
+      const eLegend = mk('legend').edgeStrength();
+      const eCommon = mk('common').edgeStrength();
+      ok(eLegend > eCommon, `传说比寻常更亮（${eLegend} > ${eCommon}）`);
+      ok(mk('legend', true).edgeStrength() < eLegend, '未遇见的卡不发光（不然"没抽到"也很亮）');
+      // 网格间距 = 卡片间距令牌
+      const cards = findAll(sc.scroll.content, (w) => w.constructor.name === 'CharCard');
+      if (cards.length >= 3) {
+        const gapX = cards[1].x - cards[0].x - cards[0].w;
+        const gapY = cards[2].y - cards[0].y - cards[0].h;
+        ok(Math.abs(gapX - theme.CARD.gap) < 0.5, `图鉴列间距 = ${theme.CARD.gap}（实际 ${Math.round(gapX)}）`);
+        ok(Math.abs(gapY - theme.CARD.gap) < 0.5, `图鉴行间距 = ${theme.CARD.gap}（实际 ${Math.round(gapY)}）`);
+      } else {
+        ok(false, '图鉴至少要有 3 张卡才能量网格间距');
+      }
+    }
+
+    // ---- 结果页：共振大数字 + 保存图片 ----
+    {
+      const divination = require(path.join(ROOT, 'services/divination.js'));
+      divination.prepare({
+        profile: { name: '美化', birthDate: '1995-03-08', birthTime: '09:30', timeKnown: true, province: '上海', city: '上海' },
+        mode: 'chart', quizCount: 10, quizToken: 'beauty'
+      });
+      // 走真实链路拿结果：prepare → takePending → run → 交给结果页
+      // （直接 reset('result') 是拿不到结果的 —— 结果页只认 params）
+      const outcome = await divination.run(divination.takePending());
+      router.replace('result', { outcome });
+      await sleep(40);
+      step(2);
+      const sc = router.current();
+      ok(sc.constructor.name === 'ResultScene' && !!sc.result, '进入结果页且带上了结果');
+      sc.settle();
+      step(1);
+      const res = sc.result.match.main;
+      const texts = stage.canvas._ops
+        .filter((o) => o[0] === 'text' && typeof o[1] === 'string' && o[8] !== false)
+        .map((o) => o[1]);
+      ok(texts.indexOf(String(res.resonance)) >= 0,
+        `共振度是独立的大数字（${res.resonance}，不再只挂在进度条尾巴上）`);
+      // 星座连线装饰（矢量图元，没有文字）
+      const svg = stage.canvas._ops.filter((o) => o[0] === 'arc' || o[0] === 'lineTo');
+      ok(svg.length > 50, `结果页有大量装饰图元（${svg.length} 条）`);
+      const saveBtn = find(sc.root, (w) => w.text === copy.UI.resultSavePic);
+      ok(!!saveBtn, '结果页有「保存图片」');
+      ok(!!find(sc.root, (w) => w.text === copy.UI.resultShare), '分享和保存是两个独立入口');
+      // 点保存：测试环境没有相册 API，必须给出明确说法而不是静默失败
+      resetOps();
+      tapWidget(saveBtn);
+      await sleep(60);
+      const toasts = findAll(sc.overlay, (w) => w.constructor.name === 'Toast');
+      ok(toasts.length > 0, '点保存会给出反馈');
+      // 取**最后一条**：先弹的是"正在生成海报…"，失败原因在后面那一条
+      const lastToast = toasts.length ? toasts[toasts.length - 1].text : '';
+      ok(/不支持|相册|没存上/.test(lastToast),
+        `保存失败时说得清原因（"${lastToast}"）`);
+    }
+
+    // ---- 答题页：A/B/C 徽章、金色题号标签、跳过是次级样式 ----
+    {
+      const divination = require(path.join(ROOT, 'services/divination.js'));
+      divination.prepare({
+        profile: { name: '美化', birthDate: '1995-03-08', timeKnown: false },
+        mode: 'chart', quizCount: 10, quizToken: 'beauty'
+      });
+      router.reset('quiz');
+      await sleep(30);
+      step(2);
+      const sc = router.current();
+      sc.settle();
+      step(1);
+      const texts = stage.canvas._ops
+        .filter((o) => o[0] === 'text' && typeof o[1] === 'string')
+        .map((o) => o[1]);
+      ok(texts.indexOf('A') >= 0 && texts.indexOf('B') >= 0, '选项带 A/B/C 字母徽章');
+      ok(texts.indexOf('01') >= 0, `题号补零显示（01 / ${sc.list.length}）`);
+      ok(texts.indexOf(`第 1 题`) >= 0, '题干上方有金色题号标签');
+      const rows = findAll(sc.root, (w) => w.constructor.name === 'OptionRow');
+      ok(rows.length >= 2, `选项行都在（${rows.length} 个）`);
+      ok(rows[0].letter === 'A' && rows[1].letter === 'B', '字母按顺序下发');
+      // 错峰入场：越靠后的选项延迟越大
+      ok(rows[1].entryDelay > rows[0].entryDelay,
+        `选项错峰入场（${rows[0].entryDelay}ms → ${rows[1].entryDelay}ms）`);
+      ok(rows.every((r) => r.entryT === 1), 'settle 后所有选项已落位');
+      const prevBtn = find(sc.root, (w) => w.text === copy.UI.quizPrev);
+      ok(prevBtn && prevBtn.variant === 'ghost', '上一题是幽灵按钮');
+      const skipBtn = find(sc.root, (w) => w.text === copy.UI.quizSkip);
+      ok(skipBtn && skipBtn.variant === 'text', '跳过这题是纯文字链接（次级出路）');
+      // 选中态：点一下要变成"金描边 + 行尾对勾"
+      const row0 = rows[0];
+      tapWidget(row0);
+      await sleep(40);
+      step(1);
+      const rows2 = findAll(router.current().root, (w) => w.constructor.name === 'OptionRow');
+      const selected = rows2.filter((r) => r.selected);
+      ok(selected.length >= 1, '单选点一下有选中反馈（即使它马上翻页）');
+    }
+
+    // ---- 畅玩卡：实体卡面 + 权益列表 + 呼吸按钮 ----
+    {
+      router.reset('recharge');
+      await sleep(40);
+      step(2);
+      const sc = router.current();
+      sc.settle();
+      step(1);
+      const passCard = find(sc.root, (w) => w.constructor.name === 'PassCard');
+      ok(!!passCard, '畅玩卡页有实体卡面');
+      ok(Math.abs(passCard.h / passCard.w - 9 / 16) < 0.02,
+        `卡面是 16:9（${Math.round(passCard.w)}×${Math.round(passCard.h)}）`);
+      const texts = stage.canvas._ops
+        .filter((o) => o[0] === 'text' && typeof o[1] === 'string')
+        .map((o) => o[1]);
+      ok(texts.indexOf(copy.UI.rechargeCardName) >= 0, '卡面上写着「畅玩卡」');
+      ok(texts.indexOf(copy.UI.rechargeBenefitsTitle) >= 0, '有"开通后能做什么"这一节');
+      // 权益文案必须真的对得上代码：只列做到的事
+      ok(copy.UI.rechargeBenefits.length >= 2, `权益至少两条（${copy.UI.rechargeBenefits.length}）`);
+      const adBtn = find(sc.root, (w) => w.text === copy.UI.rechargeAdBtn);
+      ok(adBtn && adBtn.pulse === true, '看广告按钮带呼吸微光（引导点击）');
+      const benefitIcons = findAll(sc.root, (w) => w.constructor.name === 'IconText'
+        && copy.UI.rechargeBenefits.indexOf(w.text) >= 0);
+      ok(benefitIcons.length === copy.UI.rechargeBenefits.length, '每条权益都有前置对勾图标');
+    }
+
+    // ---- 我的页：次数用完时的行内解锁 + 前置图标 + 虚线新建 ----
+    {
+      const entitlement = require(path.join(ROOT, 'services/entitlement.js'));
+      entitlement.reset();
+      // 先把免费次数用光
+      const st0 = entitlement.check();
+      if (st0.ok && st0.kind === 'free') entitlement.consume('free');
+      const st1 = entitlement.check();
+      if (st1.ok && st1.kind === 'free') entitlement.consume('free');
+      router.reset('account');
+      await sleep(40);
+      step(1);
+      const sc = router.current();
+      sc.settle();
+      step(1);
+      const unlockBtn = find(sc.root, (w) => w.text === copy.UI.accountQuotaUnlock);
+      ok(!!unlockBtn, '次数用完后有行内「+ 解锁」按钮');
+      const addBtn = find(sc.root, (w) => w.text === copy.UI.accountProfileAdd);
+      ok(addBtn && addBtn.variant === 'dashed', '新建资料卡是虚线描边按钮');
+      // 列表入口的图标：图标名必须都在图标集里（拼错会静默不画）
+      const iconRows = findAll(sc.root, (w) => w.icon);
+      ok(iconRows.length >= 3, `有 ${iconRows.length} 行带前置图标`);
+      const badIcons = iconRows.filter((w) => !iconMod.has(w.icon)).map((w) => w.icon);
+      ok(badIcons.length === 0, `图标名都能在图标集里找到（问题项：${badIcons.join(',') || '无'}）`);
+      ok(iconMod.names().length >= 18, `图标集有 ${iconMod.names().length} 个图标`);
+      // 资料卡的「默认」徽章与「编辑」入口
+      const pcard = find(sc.root, (w) => w.constructor.name === 'ProfileCard');
+      if (pcard) {
+        ok(pcard.pressScale < 1, '资料卡有按压缩放');
+      } else {
+        ok(true, '（当前没有资料卡，跳过资料卡断言）');
+      }
+      entitlement.reset();
+      storageMod.set('agreement_v1', '1');
+    }
+
+    // ---- 设置页：开关是 iOS 形状，不再写"开/关"两个字 ----
+    {
+      router.reset('profile');
+      await sleep(40);
+      step(2);
+      const sc = router.current();
+      sc.settle();
+      step(1);
+      const rows = findAll(sc.root, (w) => w.constructor.name === 'SettingRow' && w.switchOn !== undefined && w.switchOn !== null);
+      ok(rows.length >= 3, `设置页有 ${rows.length} 个开关行`);
+      ok(rows.every((r) => r.swW === 100 && r.swH === 60), '开关尺寸统一（100×60）');
+      const texts = stage.canvas._ops
+        .filter((o) => o[0] === 'text' && typeof o[1] === 'string')
+        .map((o) => o[1]);
+      ok(texts.indexOf('开') < 0 && texts.indexOf('关') < 0,
+        '开关不再写字（一眼看出状态，不用读"开/关"）');
+      const textRows = findAll(sc.root, (w) => w.constructor.name === 'SettingRow' && w.text !== undefined);
+      const badRows = findAll(sc.root, (w) => w.constructor.name === 'SettingRow' && w.icon && !iconMod.has(w.icon));
+      ok(badRows.length === 0, `设置页图标名都有效（问题项：${badRows.map((r) => r.icon).join(',') || '无'}）`);
+      void textRows;
+    }
+
+    // ---- 今日提示卡：首页和结果页共用同一个组件、两种密度 ----
+    {
+      const gameMod = require(path.join(ROOT, 'src/js/ui/game.js'));
+      ok(typeof gameMod.TodayCard === 'function', '今日提示是一个共用组件');
+      const fortune = require(path.join(ROOT, 'core/fortune.js'));
+      const f = fortune.daily({ seed: 12345 }, '2026-09-17');
+      const slim = new gameMod.TodayCard({ x: 0, y: 0, w: 686, fortune: f, chart: null, full: false });
+      const full = new gameMod.TodayCard({ x: 0, y: 0, w: 686, fortune: f, chart: null, full: true });
+      ok(full.h > slim.h, `完整版比精简版高（${Math.round(full.h)} > ${Math.round(slim.h)}）`);
+      ok(slim.h > 300 && full.h > 300, '两种密度都有实际内容高度');
+      const plainCtx = stage.canvas._ops;
+      void plainCtx;
+      ok(new gameMod.TodayCard({ x: 0, y: 0, w: 686, fortune: null }).h > 0,
+        '没有日运数据时也能建出来（不抛）');
+    }
+
+    // ---- 金币只用在"三处"：主按钮 / 选中态 / 关键数字 ----
+    {
+      const src = require('fs').readFileSync(path.join(ROOT, 'src/js/ui/widget.js'), 'utf8');
+      // 小节标题的文字不再用金色（金色贬值的主因之一），金色只留给左侧那根竖条
+      const m = /class SectionTitle[\s\S]*?\n}/.exec(src);
+      ok(!!m, '找得到 SectionTitle 的实现');
+      ok(!!m && /this\.color = o\.color \|\| COLOR\.ink/.test(m[0]),
+        '小节标题文字用白色，金色只留给左侧竖条');
+      ok(!!m && /fillRoundRect\(ctx, 0, 8, 6, 30, 3, COLOR\.gold\)/.test(m[0]),
+        '小节标题的竖条仍然是金色（保留一个金色锚点）');
+    }
+
+    router.reset('home');
+    await sleep(20);
   }
 
   console.log(`通过 ${passed} 项，失败 ${failed} 项`);

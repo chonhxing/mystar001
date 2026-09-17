@@ -1,6 +1,7 @@
 const draw = require('../draw.js');
 const text = require('../text.js');
-const { COLOR, FONT, font, RADIUS } = require('../theme.js');
+const { COLOR, CARD, FONT, font, RADIUS } = require('../theme.js');
+const icons = require('./icon.js');
 
 /**
  * UI 基类与展示型控件。
@@ -36,6 +37,32 @@ class Widget {
     this.parent = null;
     this.scrollX = 0;
     this.scrollY = 0;
+    /**
+     * 按压反馈：按住时整体缩到 pressScale（默认关，1 = 不缩放）。
+     * 子类只要在 onPressStart/onPressEnd 里翻 this.pressed，基类负责缓动和变换 ——
+     * 以前每个控件各写一份"按下去变 0.98"，手感还都不一样。
+     */
+    this.pressScale = o.pressScale === undefined ? 1 : o.pressScale;
+    this.pressed = false;
+    this.pressT = 0;
+  }
+
+  /**
+   * 按压动画。返回是否有变化（有变化才会触发重绘）。
+   * 子类覆写 update 时**不要忘**掉这条：不复用的话按住时不会重绘，缩放会卡住。
+   */
+  updatePress(dt) {
+    if (this.pressScale === 1) return false;
+    const target = this.pressed ? 1 : 0;
+    if (Math.abs(this.pressT - target) < 0.004) {
+      if (this.pressT !== target) {
+        this.pressT = target;
+        return true;
+      }
+      return false;
+    }
+    this.pressT += (target - this.pressT) * Math.min(1, dt / 110);
+    return true;
   }
 
   add(...kids) {
@@ -162,11 +189,32 @@ class Widget {
   /** 子类覆写。基类必须有这个空实现 —— 纯容器控件（new Widget()）不会画东西但会走到这里 */
   drawSelf() {}
 
+  /**
+   * 把所有动画跳到**终点**，并向下递归。
+   *
+   * 给布局审计用：动画中途的坐标（内容上移 20px、卡片缩放 0.9、数字还在滚）
+   * 不代表用户最终看到的画面，拿它去量重叠会凭空生成一堆假问题。
+   * 有自入场动画的控件覆写这个方法。
+   */
+  settle() {
+    this.children.forEach((c) => {
+      if (c.settle) c.settle();
+    });
+    return this;
+  }
+
   draw(ctx, stage, t) {
     if (!this.visible) return;
     ctx.save();
     ctx.translate(this.x, this.y);
     if (this.alpha !== 1) ctx.globalAlpha *= this.alpha;
+    // 按压：以自身中心为轴缩到 pressScale
+    if (this.pressScale !== 1 && this.pressT > 0.004) {
+      const k = 1 - this.pressT * (1 - this.pressScale);
+      ctx.translate(this.w / 2, this.h / 2);
+      ctx.scale(k, k);
+      ctx.translate(-this.w / 2, -this.h / 2);
+    }
     this.drawSelf(ctx, stage, t);
     this.drawChildren(ctx, stage, t);
     ctx.restore();
@@ -178,7 +226,7 @@ class Widget {
 
   /** @returns {boolean} 是否有变化（有变化才触发重绘） */
   update(dt, t) {
-    let changed = false;
+    let changed = this.updatePress(dt);
     this.children.forEach((c) => {
       if (c.update && c.update(dt, t)) changed = true;
     });
@@ -186,8 +234,18 @@ class Widget {
   }
 
   onTap() {}
-  onPressStart() {}
-  onPressEnd() {}
+  onPressStart() {
+    if (this.pressScale !== 1) {
+      this.pressed = true;
+      this.dirty();
+    }
+  }
+  onPressEnd() {
+    if (this.pressScale !== 1) {
+      this.pressed = false;
+      this.dirty();
+    }
+  }
   onLongPress() {}
   onDrag() {}
 }
@@ -307,7 +365,7 @@ class Tag extends Widget {
   }
 }
 
-/** 细进度条 */
+/** 细进度条（默认带 0.3s 的填充动画） */
 class ProgressBar extends Widget {
   constructor(opts) {
     super(opts);
@@ -316,6 +374,10 @@ class ProgressBar extends Widget {
     this.h = this.h || 8;
     this.from = o.from || COLOR.violet;
     this.to = o.to || COLOR.gold;
+    this.animate = o.animate !== false;
+    /** 当前画出来的值：跟着 value 缓动，答题时那一条会"长"过去而不是瞬移 */
+    this.display = this.animate ? 0 : this.value;
+    this.flow = o.flow !== false;
   }
 
   setValue(v) {
@@ -324,27 +386,52 @@ class ProgressBar extends Widget {
     return this;
   }
 
-  drawSelf(ctx) {
-    draw.fillRoundRect(ctx, 0, 0, this.w, this.h, this.h / 2, 'rgba(255,255,255,0.08)');
-    const w = Math.max(0, this.w * this.value);
-    if (w < 1) return;
-    const g = ctx.createLinearGradient(0, 0, this.w, 0);
-    g.addColorStop(0, this.from);
-    g.addColorStop(1, this.to);
-    draw.fillRoundRect(ctx, 0, 0, w, this.h, this.h / 2, g);
+  settle() {
+    this.display = this.value;
+    return super.settle();
+  }
+
+  update(dt) {
+    let changed = this.updatePress(dt);
+    if (this.flow) changed = true; // 流光一直在跑
+    if (!this.animate) return changed;
+    if (Math.abs(this.display - this.value) < 0.002) {
+      if (this.display !== this.value) {
+        this.display = this.value;
+        changed = true;
+      }
+      return changed;
+    }
+    // 0.3s 走完（按剩余距离的比例逼近，快慢不同也不会"越远越慢得离谱"）
+    this.display += (this.value - this.display) * Math.min(1, dt / 130);
+    return true;
+  }
+
+  drawSelf(ctx, stage, t) {
+    const v = this.animate ? this.display : this.value;
+    draw.flowBar(ctx, 0, 0, this.w, this.h, v, t, {
+      from: this.from,
+      to: this.to,
+      flow: this.flow
+    });
   }
 }
 
-/** 面板：深色半透明卡片 + 描边，可选标题与发光。子控件加到 card.content 里 */
+/**
+ * 面板：深色半透明卡片 + 描边，可选标题与发光。子控件加到 card.content 里。
+ *
+ * ⚠️ 内边距统一走 CARD.pad（32）。**子控件的宽度必须用 contentW - CARD.pad * 2** ——
+ *    写成别的数（比如以前遗留的 - 56）会溢出一截，布局审计会报"压边/重叠"。
+ */
 class Card extends Widget {
   constructor(opts) {
     super(opts);
     const o = opts || {};
-    this.pad = o.pad === undefined ? 28 : o.pad;
-    this.radius = o.radius || RADIUS.lg;
+    this.pad = o.pad === undefined ? CARD.pad : o.pad;
+    this.radius = o.radius || CARD.radius;
     this.glow = !!o.glow;
-    this.fill = o.fill || COLOR.panel;
-    this.stroke = o.stroke || (o.glow ? COLOR.line : COLOR.lineSoft);
+    this.fill = o.fill || CARD.fill;
+    this.stroke = o.stroke || (o.glow ? COLOR.line : CARD.stroke);
     this.content = new Widget({ x: this.pad, y: this.pad, w: this.w - this.pad * 2, h: this.h - this.pad * 2 });
     this.content.parent = this;
     this.children.push(this.content);
@@ -388,25 +475,28 @@ class Card extends Widget {
   }
 }
 
-/** 小节标题：金色竖条 + 文字 */
+/**
+ * 小节标题：金色竖条 + 文字。
+ *
+ * 文字刻意用**白色**而不是金色 —— 金色只留给主按钮/选中态/关键数字，
+ * 满屏金字会让金色贬值（"哪儿都是金，就等于哪儿都不金"）。
+ */
 class SectionTitle extends Widget {
   constructor(opts) {
     super(opts);
     const o = opts || {};
     this.text = String(o.text || '');
     this.size = o.size || FONT.h3;
+    this.color = o.color || COLOR.ink;
     this.h = this.h || 44;
   }
 
   drawSelf(ctx) {
-    const g = ctx.createLinearGradient(0, 0, 0, 36);
-    g.addColorStop(0, COLOR.gold);
-    g.addColorStop(1, COLOR.violet);
-    draw.fillRoundRect(ctx, 0, 6, 6, 32, 3, g);
+    draw.fillRoundRect(ctx, 0, 8, 6, 30, 3, COLOR.gold);
     ctx.font = font(this.size, '600');
-    ctx.fillStyle = COLOR.gold;
+    ctx.fillStyle = this.color;
     ctx.textBaseline = 'middle';
-    ctx.fillText(this.text, 20, this.h / 2);
+    ctx.fillText(this.text, 22, this.h / 2);
   }
 }
 
@@ -460,6 +550,143 @@ class HLine extends Widget {
   }
 }
 
+/**
+ * 滚动数字。
+ *
+ * "数字从 0 滚上去"是运气类产品的灵魂动作 —— 共振度、收集进度、统计数字
+ * 用它出现，比直接印一个静态数字有仪式感得多。
+ * 用 outCubic 缓动、默认 900ms：够长看得清，又不至于让用户等。
+ */
+class NumberTicker extends Widget {
+  constructor(opts) {
+    super(opts);
+    const o = opts || {};
+    this.value = Number(o.value) || 0;
+    this.size = o.size || FONT.h1;
+    this.weight = o.weight || '700';
+    this.color = o.color || COLOR.gold;
+    this.align = o.align || 'left';
+    this.suffix = o.suffix === undefined ? '' : String(o.suffix);
+    this.duration = o.duration === undefined ? 900 : o.duration;
+    this.decimals = o.decimals || 0;
+    this.animate = o.animate !== false;
+    this.elapsed = 0;
+    this.current = this.animate ? 0 : this.value;
+    this.lineHeight = this.lineHeight || Math.round(this.size * 1.2);
+    if (!this.h) this.h = this.lineHeight;
+  }
+
+  /** 重设目标值：从当前显示值继续滚（不是从 0 重来） */
+  setValue(v) {
+    this.value = Number(v) || 0;
+    this.elapsed = 0;
+    this.dirty();
+    return this;
+  }
+
+  /** 文字内容（测试和布局审计都靠它，别在 drawSelf 里另算一遍） */
+  label() {
+    const v = this.decimals
+      ? this.current.toFixed(this.decimals)
+      : String(Math.round(this.current));
+    return `${v}${this.suffix}`;
+  }
+
+  settle() {
+    this.current = this.value;
+    this.elapsed = this.duration;
+    return super.settle();
+  }
+
+  update(dt) {
+    if (!this.animate) return this.updatePress(dt);
+    if (this.elapsed >= this.duration) return this.updatePress(dt);
+    this.elapsed += dt;
+    const p = Math.min(1, this.elapsed / this.duration);
+    const eased = 1 - Math.pow(1 - p, 3);
+    const next = this.value * eased;
+    const changed = Math.abs(next - this.current) > 0.001 || p >= 1;
+    this.current = p >= 1 ? this.value : next;
+    return changed || this.updatePress(dt);
+  }
+
+  drawSelf(ctx) {
+    ctx.font = font(this.size, this.weight);
+    ctx.fillStyle = this.color;
+    ctx.textBaseline = 'middle';
+    let ax = 0;
+    ctx.textAlign = 'left';
+    if (this.align === 'center') {
+      ax = this.w ? this.w / 2 : 0;
+      ctx.textAlign = 'center';
+    } else if (this.align === 'right') {
+      ax = this.w;
+      ctx.textAlign = 'right';
+    }
+    ctx.fillText(this.label(), ax, this.h / 2);
+    ctx.textAlign = 'left';
+  }
+}
+
+/**
+ * 图标 + 文字。
+ *
+ * 列表前置图标、宜/忌行、"今日免费次数"这类状态行都用它 ——
+ * 图标在左、文字在右、整体可选中对齐方式，避免每个页面自己摆一遍坐标。
+ */
+class IconText extends Widget {
+  constructor(opts) {
+    super(opts);
+    const o = opts || {};
+    this.icon = o.icon || '';
+    this.text = o.text === undefined ? '' : String(o.text);
+    this.size = o.size || FONT.body;
+    this.weight = o.weight || '';
+    this.color = o.color || COLOR.ink2;
+    this.iconColor = o.iconColor || this.color;
+    this.iconAlpha = o.iconAlpha === undefined ? 0.75 : o.iconAlpha;
+    this.iconSize = o.iconSize || (this.size + 8);
+    this.gap = o.gap === undefined ? 16 : o.gap;
+    this.align = o.align || 'left';
+    this.maxWidth = o.maxWidth || 0;
+    this.lineHeight = this.lineHeight || Math.round(this.size * 1.3);
+    if (!this.h) this.h = Math.max(this.lineHeight, this.iconSize);
+  }
+
+  setText(t) {
+    this.text = t === undefined || t === null ? '' : String(t);
+    this.dirty();
+    return this;
+  }
+
+  setColor(c) {
+    this.color = c;
+    this.iconColor = c;
+    this.dirty();
+    return this;
+  }
+
+  drawSelf(ctx) {
+    const f = font(this.size, this.weight);
+    const s = this.maxWidth ? text.singleLine(this.text, this.maxWidth, f) : this.text;
+    const w = this.maxWidth ? Math.min(text.measure(s, f), this.maxWidth) : text.measure(s, f);
+    const cy = this.h / 2;
+    let x = 0;
+    let tx = this.icon ? this.iconSize + this.gap : 0;
+    if (this.align === 'center') x = (this.w - (tx + w)) / 2;
+    else if (this.align === 'right') x = this.w - (tx + w);
+
+    if (this.icon) {
+      icons.drawIcon(ctx, this.icon, x + this.iconSize / 2, cy, this.iconSize, this.iconColor, this.iconAlpha);
+    }
+    ctx.font = f;
+    ctx.fillStyle = this.color;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.fillText(s, x + tx, cy);
+  }
+}
+
 module.exports = {
   Widget,
   Panel,
@@ -471,6 +698,8 @@ module.exports = {
   Card,
   SectionTitle,
   HLine,
+  NumberTicker,
+  IconText,
   setStage,
   getStage
 };

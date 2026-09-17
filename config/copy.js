@@ -149,7 +149,12 @@ const UI = {
   resultCounselTitle: '一句提点',
   resultTodayTitle: '今日提示',
   resultAgain: '再来一次',
-  resultShare: '分享结果',
+  resultShare: '分享给朋友',
+  resultSavePic: '保存图片',
+  resultSaveOk: '已存到相册，去发朋友圈吧',
+  resultSaveDenied: '要相册权限才能保存，去设置里打开',
+  resultSaveFail: '没存上，稍后再试',
+  resultSaveUnsupported: '当前环境不支持保存图片',
   resultCodex: '去图鉴',
   resultResonanceTag: '共振 {n}%',
   resultShared: '你们共享的命途',
@@ -158,6 +163,9 @@ const UI = {
   resultQuotaNotice: '今天的深度解读用完了，明天再来',
   resultAiLabel: '本页解读文案由人工智能生成',
   resultAiLabelLocal: '本页解读由本机算法生成',
+  /** 结果页"命运对照卡"两侧的署名（左你右 TA） */
+  resultCompareYou: '你',
+  resultCompareTa: 'TA',
 
   // 图鉴
   codexProgress: '已遇见 {n} / {total}',
@@ -167,6 +175,8 @@ const UI = {
   codexLockedTip: '还没在匹配中遇见 TA',
   codexEmpty: '这个筛选下还没有角色',
   codexGo: '去匹配，遇见新的命途',
+  /** 筛选胶囊上的数量角标（传说 6 / 已遇见 12） */
+  codexChipAll: '全部',
 
   // 角色详情
   charFatesTitle: 'TA 的命途',
@@ -206,6 +216,7 @@ const UI = {
   // 解锁（免费次数用完之后）
   // ⚠️ 别说"今天" —— 免费次数是一次性的，代码里没有任何按天重置逻辑
   unlockTitle: '免费次数用完了',
+  unlockSub: '看一个广告，就能再解锁一次匹配',
   unlockFreeDone: '免费 {n} 次已经用完',
   unlockByAd: '看广告 · 解锁 1 次',
   unlockOrBuy: '或 开通畅玩卡',
@@ -243,6 +254,8 @@ const UI = {
   rechargePass: '畅玩卡',
   rechargePassOn: '剩余 {days} 天',
   rechargePassOff: '未开通',
+  rechargeCardName: '畅玩卡',
+  rechargeCardSlogan: '不限次匹配',
   rechargeAdBtn: '看广告 · 解锁 1 次',
   rechargeAdOk: '已解锁 1 次',
   rechargeAdFail: '广告没看完，再试一次',
@@ -254,6 +267,15 @@ const UI = {
   rechargePaid: '{days} 天畅玩卡已到账',
   rechargePending: '支付已受理，权益稍后到账',
   rechargeCancel: '已取消',
+  /**
+   * 权益列表。
+   * ⚠️ 只写**代码里真的做到**的事 —— 编一条"专属称号"之类的权益，
+   *    属于虚假宣传，也是投诉和退款纠纷的源头。目前真有的就这三条：
+   *    不限次、因此不再看广告、以及换设备能从账号恢复。
+   */
+  rechargeBenefitsTitle: '开通后能做什么',
+  rechargeBenefits: ['匹配不限次，随时想算就算', '免费次数用完后不必再看广告', '换设备可用「从账号恢复」找回畅玩卡'],
+  rechargeBenefitFree: '先往下看：不花钱也能看广告解锁',
 
   // 账号（正式版：只留必要信息，不做解释性文案）
   accountTitle: '账号',
@@ -317,6 +339,9 @@ const UI = {
   accountQuotaTicket: '解锁券 {n} 次',
   accountQuotaPass: '畅玩卡 {days} 天',
   accountQuotaNone: '已用完',
+  /** 次数用完后，这一行右侧那个"就地补次数"的行内按钮 */
+  accountQuotaUnlock: '+ 解锁',
+  accountQuotaAllUsed: '今日免费次数已用完',
   accountBuyShort: '去开通',
   accountProfilesTitle: '资料卡',
   accountProfileAdd: '+ 新建资料卡',
@@ -325,6 +350,8 @@ const UI = {
   accountProfileFull: '最多 {n} 张资料卡',
   accountProfileDelete: '删除这张资料卡？',
   accountProfileDeleted: '已删除',
+  accountProfileEdit: '编辑',
+  accountProfileDefault: '默认',
   accountProfileTimeUnknown: '时辰未知',
   accountEntryCodex: '我的图鉴',
   accountEntryRecords: '匹配记录',

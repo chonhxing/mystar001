@@ -7,7 +7,7 @@
     "start": "node --env-file=server/.env server/index.js",
     "dev": "node server/index.js",
     "sync": "node tools/sync-shared.js",
-    "test": "node tools/sync-shared.js && node tools/selftest.js && node tools/check-structure.js && node tools/server-test.js && node tools/client-test.js && node tools/game-test.js && node tools/diag-scroll.js",
+    "test": "node tools/sync-shared.js && node tools/selftest.js && node tools/draws-test.js && node tools/check-structure.js && node tools/server-test.js && node tools/client-test.js && node tools/game-test.js && node tools/diag-scroll.js",
     "test:core": "node tools/selftest.js",
     "test:game": "node tools/game-test.js",
     "test:server": "node tools/server-test.js",
@@ -21,7 +21,8 @@
     "probe:model": "node --env-file=server/.env tools/probe-model.js",
     "db:check": "node tools/check-db.js",
     "db:e2e": "node tools/e2e-db.js",
-    "env:sheet": "node tools/make-env-sheet.js"
+    "env:sheet": "node tools/make-env-sheet.js",
+    "test:draws": "node tools/draws-test.js"
   },
   "engines": {
     "node": ">=20.6.0"

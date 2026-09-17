@@ -2,7 +2,7 @@ const { Scene } = require('../router.js');
 const { Label, Paragraph, Card, Panel, SectionTitle } = require('../ui/widget.js');
 const { Button, ScrollView } = require('../ui/interactive.js');
 const { Starfield, TopBar, CharCard, DimBars, FateTags, ResonanceRing } = require('../ui/game.js');
-const { COLOR, FONT, RADIUS } = require('../theme.js');
+const { COLOR, CARD, FONT, RADIUS, TXT } = require('../theme.js');
 const draw = require('../draw.js');
 const copy = require('../../../config/copy.js');
 const { CHARACTER_MAP, RARITY } = require('../../../data/characters.js');
@@ -80,11 +80,11 @@ class CharacterScene extends Scene {
       showFates: false, showResonance: false
     });
     scroll.add(card);
-    y += card.h + 24;
+    y += card.h + CARD.gap;
 
     if (!this.unlocked) {
       scroll.add(new Paragraph({
-        x: pad, y, w: contentW, align: 'center', text: copy.UI.charLocked, size: FONT.small, color: COLOR.ink4
+        x: pad, y, w: contentW, align: 'center', text: copy.UI.charLocked, size: FONT.small, color: COLOR.ink3
       }));
       y += 56;
     }
@@ -96,7 +96,7 @@ class CharacterScene extends Scene {
       scroll.add(ring);
       y += ringW - 10;
       if (this.sharedFates.length) {
-        scroll.add(new Label({ x: pad, y, w: contentW, text: copy.UI.resultShared, size: FONT.micro, color: COLOR.ink4, align: 'center' }));
+        scroll.add(new Label({ x: pad, y, w: contentW, text: copy.UI.resultShared, size: FONT.tiny, color: COLOR.ink3, align: 'center' }));
         y += 36;
         const tags = new FateTags({ x: pad, y, w: contentW, tags: this.sharedFates });
         scroll.add(tags);
@@ -107,16 +107,16 @@ class CharacterScene extends Scene {
     // 意象与定位
     const infoCard = new Card({ x: pad, y, w: contentW, glow: true });
     let iy = 0;
-    const motif = new Paragraph({ x: 0, y: iy, w: contentW - 56, text: this.char.motif, size: FONT.h3, lineHeight: 54, color: COLOR.ink });
+    const motif = new Paragraph({ x: 0, y: iy, w: contentW - CARD.pad * 2, text: this.char.motif, size: FONT.h3, lineHeight: 54, color: COLOR.ink });
     infoCard.add(motif);
     iy += motif.h + 20;
-    const sig = new Paragraph({ x: 0, y: iy, w: contentW - 56, text: this.char.signature, size: FONT.body, lineHeight: 50, color: COLOR.ink2 });
+    const sig = new Paragraph({ x: 0, y: iy, w: contentW - CARD.pad * 2, text: this.char.signature, size: FONT.body, lineHeight: 50, color: TXT.sub });
     infoCard.add(sig);
     iy += sig.h;
     infoCard.content.h = iy;
     infoCard.fitHeight(0);
     scroll.add(infoCard);
-    y += infoCard.h + 28;
+    y += infoCard.h + CARD.gap;
 
     // TA 的命途
     const st = new SectionTitle({ x: pad, y, w: contentW, text: copy.UI.charFatesTitle });
@@ -124,35 +124,38 @@ class CharacterScene extends Scene {
     y += 68;
 
     const fateCard = new Card({ x: pad, y, w: contentW });
+    const fateInner = contentW - CARD.pad * 2;
     let fy = 0;
     this.fates.forEach((f, i) => {
-      fateCard.add(new Label({ x: 0, y: fy, w: contentW - 56, text: f.name, size: FONT.h3, weight: '600', color: COLOR.gold }));
-      const p = new Paragraph({ x: 0, y: fy + 46, w: contentW - 56, text: f.summary, size: FONT.small, color: COLOR.ink, lineHeight: 44 });
+      // 金色小竖条：和结果页的"你携带的命途"同一套排版
+      fateCard.add(new Panel({ x: 0, y: fy + 8, w: 6, h: 30, radius: 3, fill: COLOR.gold }));
+      fateCard.add(new Label({ x: 20, y: fy, w: fateInner - 20, text: f.name, size: FONT.h3, weight: '600', color: COLOR.gold }));
+      const p = new Paragraph({ x: 20, y: fy + 48, w: fateInner - 20, text: f.summary, size: FONT.small, color: TXT.sub, lineHeight: 46 });
       fateCard.add(p);
-      const s = new Paragraph({ x: 0, y: fy + 46 + p.h + 10, w: contentW - 56, text: `阴影面：${f.shadow}`, size: FONT.micro, color: COLOR.ink4, lineHeight: 40 });
+      const s = new Paragraph({ x: 20, y: fy + 48 + p.h + 12, w: fateInner - 20, text: `阴影面：${f.shadow}`, size: FONT.micro, color: COLOR.ink3, lineHeight: 40 });
       fateCard.add(s);
-      fy += 46 + p.h + 10 + s.h + (i < this.fates.length - 1 ? 34 : 0);
+      fy += 48 + p.h + 12 + s.h + (i < this.fates.length - 1 ? 34 : 0);
     });
     fateCard.content.h = fy;
     fateCard.fitHeight(0);
     scroll.add(fateCard);
-    y += fateCard.h + 28;
+    y += fateCard.h + CARD.gap;
 
     // 八轴
     const st2 = new SectionTitle({ x: pad, y, w: contentW, text: copy.UI.charAxesTitle });
     scroll.add(st2);
     y += 68;
     const axisCard = new Card({ x: pad, y, w: contentW });
-    const bars = new DimBars({ x: 0, y: 0, w: contentW - 56, axes: this.shaped.axes });
+    const bars = new DimBars({ x: 0, y: 0, w: contentW - CARD.pad * 2, axes: this.shaped.axes });
     axisCard.add(bars);
     const note = new Paragraph({
-      x: 0, y: bars.h + 20, w: contentW - 56, text: copy.UI.charAxisNote, size: FONT.micro, color: COLOR.ink4, lineHeight: 36
+      x: 0, y: bars.h + 20, w: contentW - CARD.pad * 2, text: copy.UI.charAxisNote, size: FONT.micro, color: COLOR.ink4, lineHeight: 36
     });
     axisCard.add(note);
     axisCard.content.h = bars.h + 20 + note.h;
     axisCard.fitHeight(0);
     scroll.add(axisCard);
-    y += axisCard.h + 32;
+    y += axisCard.h + CARD.gap;
 
     // 操作
     scroll.add(new Button({

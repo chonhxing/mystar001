@@ -1,5 +1,6 @@
 const draw = require('../draw.js');
 const text = require('../text.js');
+const icons = require('./icon.js');
 const { Widget, Card, Label, setStage, getStage } = require('./widget.js');
 const { COLOR, FONT, font, RADIUS } = require('../theme.js');
 
@@ -26,6 +27,14 @@ class Button extends Widget {
     this.enabled = o.enabled !== false;
     this.pressed = false;
     this.pressT = 0; // 0~1 按压动画进度
+    /** 呼吸微光：引导点击的主按钮用（畅玩卡的"看广告"） */
+    this.pulse = !!o.pulse;
+    this.t = 0;
+    /**
+     * ⚠️ 按压缩放由 Button 自己管（0.97），所以要把基类那套关掉。
+     *    两边都缩放会变成 0.94 —— "按一下缩两下"的顿挫感。
+     */
+    this.pressScale = 1;
   }
 
   setEnabled(v) {
@@ -64,13 +73,21 @@ class Button extends Widget {
   }
 
   update(dt) {
-    const target = this.pressed && this.enabled ? 1 : 0;
-    if (Math.abs(this.pressT - target) > 0.001) {
-      this.pressT += (target - this.pressT) * Math.min(1, dt / 90);
-      this.pressed = this.pressT > 0.01 && this.pressed;
-      return true;
+    let changed = false;
+    if (this.pulse) {
+      this.t += dt;
+      changed = true;
     }
-    return false;
+    const target = this.pressed && this.enabled ? 1 : 0;
+    if (Math.abs(this.pressT - target) > 0.002) {
+      // 0.15s 的过渡：按下去"陷"一下，松开弹回来
+      this.pressT += (target - this.pressT) * Math.min(1, dt / 150);
+      changed = true;
+    } else if (this.pressT !== target) {
+      this.pressT = target;
+      changed = true;
+    }
+    return changed;
   }
 
   drawSelf(ctx) {
@@ -82,11 +99,17 @@ class Button extends Widget {
     if (!this.enabled) ctx.globalAlpha *= 0.42;
 
     if (this.variant === 'primary') {
-      const g = ctx.createLinearGradient(0, 0, this.w, this.h);
-      g.addColorStop(0, '#FFE9AE');
-      g.addColorStop(0.45, COLOR.gold);
-      g.addColorStop(1, '#C79A38');
-      draw.fillRoundRect(ctx, 0, 0, this.w, this.h, this.radius, g);
+      // 呼吸微光：整块按钮外面一圈跟着心跳的柔光
+      if (this.pulse && this.enabled) {
+        const k = 0.5 - 0.5 * Math.cos(this.t / 900);
+        // 微光只在 0.9~1 之间呼吸：太强会闪，太弱看不见
+        ctx.save();
+        ctx.globalAlpha *= 0.25 + k * 0.35;
+        draw.glow(ctx, this.w / 2, this.h / 2 + 4, this.w * 0.56, COLOR.gold, 0.5);
+        ctx.restore();
+      }
+      draw.fillRoundRect(ctx, 0, 0, this.w, this.h, this.radius, draw.goldGrad(ctx, 0, 0, this.w, this.h));
+      draw.topHighlight(ctx, 0, 0, this.w, this.radius);
       if (this.pressT > 0.02) {
         draw.glow(ctx, this.w / 2, this.h / 2, this.w * 0.6, COLOR.gold, this.pressT * 0.25);
       }
@@ -96,9 +119,29 @@ class Button extends Widget {
     } else if (this.variant === 'ghost') {
       draw.fillRoundRect(ctx, 0, 0, this.w, this.h, this.radius, 'rgba(232,200,122,0.08)');
       draw.strokeRoundRect(ctx, 0, 0, this.w, this.h, this.radius, COLOR.line, 1);
+    } else if (this.variant === 'dashed') {
+      // 虚线描边的"添加"按钮：暗示"这里还能再放一个"
+      draw.fillRoundRect(ctx, 0, 0, this.w, this.h, this.radius, 'rgba(255,255,255,0.02)');
+      draw.dashedRoundRect(ctx, 0.75, 0.75, this.w - 1.5, this.h - 1.5, this.radius, 'rgba(255,255,255,0.22)', 12, 9);
     } else {
       draw.fillRoundRect(ctx, 0, 0, this.w, this.h, this.radius, 'rgba(255,255,255,0.05)');
       draw.strokeRoundRect(ctx, 0, 0, this.w, this.h, this.radius, COLOR.lineSoft, 1);
+    }
+
+    /**
+     * 纯文字按钮（plain 的小号）不画底框，直接给一行灰字。
+     * "以后再说""跳过这题"这类**次级出路**必须看起来像一句话，
+     * 画成第二个药丸按钮会让用户以为它们平级，分不清主次。
+     */
+    if (this.variant === 'text') {
+      ctx.font = font(this.size, '');
+      ctx.fillStyle = COLOR.ink3;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(this.text, this.w / 2, this.h / 2);
+      ctx.textAlign = 'left';
+      ctx.restore();
+      return;
     }
 
     const color =
@@ -116,6 +159,155 @@ class Button extends Widget {
     ctx.fillText(this.text, this.w / 2, this.h / 2 + 1);
     ctx.textAlign = 'left';
     ctx.restore();
+  }
+}
+
+// ============================================================ 分段选择 / 开关
+
+/**
+ * 分段选择（性别、题量）。
+ *
+ * 选中态是**金色描边 + 10% 金填充 + 金字 + 图标变金**，
+ * 而不是整块金色填充 —— 之前选中项像一块金砖，压在页面上太重，
+ * 而且和主按钮抢视觉（用户："现在选中的像一块金砖"）。
+ *
+ * items 支持两种写法：`['保密','她','他']` 或 `[{label:'她', icon:'female'}]`。
+ */
+/**
+ * 分段选择（性别、题量）。
+ *
+ * 选中态是**金色描边 + 10% 金填充 + 金字 + 图标变金**，
+ * 而不是整块金色填充 —— 之前选中项像一块金砖，压在页面上太重，
+ * 还和主按钮抢视觉（用户："现在选中的像一块金砖"）。
+ *
+ * items 支持两种写法：`['保密','她','他']` 或 `[{label:'她', icon:'female'}]`。
+ */
+class Segmented extends Widget {
+  constructor(opts) {
+    super(Object.assign({ tapEnabled: true }, opts));
+    const o = opts || {};
+    this.items = (o.items || []).map((it) =>
+      typeof it === 'string' ? { label: it } : Object.assign({}, it)
+    );
+    this.index = o.index || 0;
+    this.h = o.h || 76;
+    this.onChange = o.onChange || null;
+    this.gap = o.gap === undefined ? 12 : o.gap;
+  }
+
+  onTap(x) {
+    const i = Math.min(this.items.length - 1, Math.max(0, Math.floor((x / this.w) * this.items.length)));
+    if (i === this.index) return;
+    this.index = i;
+    this.dirty();
+    if (this.onChange) this.onChange(i, this.items[i]);
+  }
+
+  drawSelf(ctx) {
+    const n = this.items.length || 1;
+    const w = (this.w - this.gap * (n - 1)) / n;
+    this.items.forEach((it, i) => {
+      const x = i * (w + this.gap);
+      const on = i === this.index;
+      draw.fillRoundRect(ctx, x, 0, w, this.h, RADIUS.md, on ? 'rgba(232,200,122,0.10)' : 'rgba(255,255,255,0.04)');
+      draw.strokeRoundRect(ctx, x, 0, w, this.h, RADIUS.md, on ? COLOR.gold : 'rgba(255,255,255,0.12)', on ? 1.6 : 1);
+      if (on) draw.glow(ctx, x + w / 2, this.h / 2, w * 0.42, COLOR.gold, 0.08);
+
+      const color = on ? COLOR.gold : COLOR.ink2;
+      const iconSize = Math.round(this.h * 0.36);
+      const labelFont = font(FONT.body, on ? '600' : '');
+      const lw = text.measure(it.label, labelFont);
+      // 有图标就"图标 + 文字"整体居中，没图标就纯文字居中
+      const total = it.icon ? iconSize + 10 + lw : lw;
+      let cx = x + (w - total) / 2;
+      if (it.icon) {
+        icons.drawIcon(ctx, it.icon, cx + iconSize / 2, this.h / 2, iconSize, color, on ? 1 : 0.7);
+        cx += iconSize + 10;
+      }
+      ctx.font = labelFont;
+      ctx.fillStyle = color;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(it.label, cx, this.h / 2 + 1);
+    });
+    ctx.textAlign = 'left';
+  }
+}
+
+/**
+ * 开关的**形状**（iOS 风格：胶囊底 + 白色圆钮）。
+ *
+ * 抽成独立函数是因为有两个使用者：Switch 控件自己，以及
+ * 那些"整行可点、开关只是行尾一个状态"的列表行（SettingRow / SwitchRow）。
+ * 后者不能让 Switch 当子控件 —— 子控件会先接住点击，行和开关就会各翻一次。
+ */
+function drawSwitchShape(ctx, x, y, w, h, on, t) {
+  const knob = h - 8;
+  draw.fillRoundRect(ctx, x, y, w, h, h / 2, on ? COLOR.gold : 'rgba(255,255,255,0.14)');
+  if (on) draw.topHighlight(ctx, x + 4, y + 1.5, w - 8, h / 2);
+  draw.strokeRoundRect(ctx, x, y, w, h, h / 2, on ? 'rgba(255,255,255,0.24)' : 'rgba(255,255,255,0.10)', 1);
+  const kx = x + 4 + (t === undefined ? (on ? 1 : 0) : t) * (w - knob - 8);
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.35)';
+  ctx.shadowBlur = 6;
+  ctx.shadowOffsetY = 1;
+  draw.drawFillCircle(ctx, kx + knob / 2, y + h / 2, knob / 2, on ? '#FFFFFF' : '#E6E4F2');
+  ctx.restore();
+}
+
+/**
+ * iOS 风格开关控件。
+ * 之前是一个写着"开/关"的圆角方块 —— 用户得读字才知道状态；
+ * 开关这种控件应该**一眼看出状态**，那个字是多余的。
+ */
+class Switch extends Widget {
+  constructor(opts) {
+    super(Object.assign({ tapEnabled: true }, opts));
+    const o = opts || {};
+    this.on = !!o.on;
+    this.h = o.h || 60;
+    this.w = o.w || 100;
+    this.onChange = o.onChange || null;
+    this.t = this.on ? 1 : 0;
+    this.pressed = false;
+  }
+
+  setOn(v, silent) {
+    const next = !!v;
+    if (next === this.on) return this;
+    this.on = next;
+    if (!silent && this.onChange) this.onChange(next);
+    this.dirty();
+    return this;
+  }
+
+  onTap() {
+    this.on = !this.on;
+    this.dirty();
+    if (this.onChange) this.onChange(this.on);
+  }
+
+  /** 让子类/测试可以直接跳到终点 */
+  settle() {
+    this.t = this.on ? 1 : 0;
+    return super.settle();
+  }
+
+  update(dt) {
+    const target = this.on ? 1 : 0;
+    if (Math.abs(this.t - target) < 0.01) {
+      if (this.t !== target) {
+        this.t = target;
+        return true;
+      }
+      return false;
+    }
+    this.t += (target - this.t) * Math.min(1, dt / 110);
+    return true;
+  }
+
+  drawSelf(ctx) {
+    drawSwitchShape(ctx, 0, 0, this.w, this.h, this.on, this.t);
   }
 }
 
@@ -878,4 +1070,18 @@ function prompt(o) {
   });
 }
 
-module.exports = { Button, ScrollView, Wheel, WheelGroup, Toast, Modal, PickerSheet, showPicker, prompt, ITEM_H };
+module.exports = {
+  Button,
+  Segmented,
+  Switch,
+  drawSwitchShape,
+  ScrollView,
+  Wheel,
+  WheelGroup,
+  Toast,
+  Modal,
+  PickerSheet,
+  showPicker,
+  prompt,
+  ITEM_H
+};

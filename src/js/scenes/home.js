@@ -1,8 +1,8 @@
 const { Scene } = require('../router.js');
-const { Widget, Label, Paragraph, Card, SectionTitle, Tag, HLine } = require('../ui/widget.js');
-const { Button, ScrollView, showPicker, prompt } = require('../ui/interactive.js');
-const { Starfield, TabBar } = require('../ui/game.js');
-const { COLOR, FONT, font, RADIUS } = require('../theme.js');
+const { Widget, Label, Paragraph, Card, SectionTitle, Tag, HLine, Hotspot } = require('../ui/widget.js');
+const { Button, ScrollView, showPicker, prompt, Segmented, drawSwitchShape } = require('../ui/interactive.js');
+const { Starfield, TabBar, TodayCard } = require('../ui/game.js');
+const { COLOR, CARD, FONT, font, RADIUS, TXT } = require('../theme.js');
 const draw = require('../draw.js');
 const text = require('../text.js');
 const copy = require('../../../config/copy.js');
@@ -20,27 +20,60 @@ const wechatprofile = require('../../../services/wechatprofile.js');
 const assets = require('../assets.js');
 
 const GENDERS = ['保密', '她', '他'];
+/** 三个性别各自的图标：不给文字，"保密"用菱形和 ♀ ♂ 区分开 */
+const GENDER_ITEMS = [
+  { label: '保密', icon: 'diamond' },
+  { label: '她', icon: 'female' },
+  { label: '他', icon: 'male' }
+];
 
 /** 时辰滚轮里那条"不知道"的出路的返回值（和正常的时间数组区分开） */
 const TIME_UNKNOWN = 'unknown';
 
-/** 表单里的一行（标签 + 当前值 + 箭头） */
+/**
+ * 表单里的一行：**左标签、右值、行尾箭头**。
+ *
+ * 用户明确要求统一成这一种（"表单行统一为：左标签、右值+chevron「›」"）。
+ * 之前是"标签在上、值在下"的两行式，一屏看下来像一堆注释；
+ * 而且时辰那行的「不知道」按钮是**悬空**挂在右侧的，位置和别的行对不上
+ * （用户："去填写按钮不要悬浮在右侧"）。现在那个动作变成行尾的金色文字，
+ * 整行可点开选择器、动作文字单独可点。
+ */
 class FormRow extends Widget {
   constructor(opts) {
     super(Object.assign({ tapEnabled: true }, opts));
-    this.label = opts.label || '';
-    this.value = opts.value === undefined ? '' : String(opts.value);
-    this.hint = opts.hint || '';
-    this.h = opts.h || (this.hint ? 148 : 100);
-    this.chevron = opts.chevron !== false;
-    this.handler = opts.onTap || null;
+    const o = opts || {};
+    this.label = o.label || '';
+    this.value = o.value === undefined ? '' : String(o.value);
+    this.hint = o.hint || '';
+    this.action = o.action || '';
+    this.h = o.h || (this.hint ? 150 : 104);
+    this.chevron = o.chevron !== false;
+    this.handler = o.onTap || null;
+    this.onAction = o.onAction || null;
+    this.valueColor = o.valueColor || TXT.body;
+    this.actionColor = o.actionColor || COLOR.gold;
     this.pressed = false;
-    this.valueColor = opts.valueColor || COLOR.ink;
-    /**
-     * 行右侧让出来的宽度：那一行如果放了小按钮（出生时辰的「不知道」），
-     * 值和箭头都要往左挪，否则会压在按钮下面。
-     */
-    this.rightPad = opts.rightPad || 0;
+
+    // 行尾的动作（「不知道」/「去填写」）是一个**真的按钮子控件**：
+    // 自己画一段文字再叠个热区的话，控件树里就没有"这个动作"这个东西了 ——
+    // 测试找不到它，无障碍/自动化也认不出它。
+    if (this.onAction && this.action) {
+      this.actionW = Math.round(text.measure(this.action, font(FONT.tiny, '600')));
+      const btnW = this.actionW + 32;
+      // 右边留 40px 给行尾箭头（箭头画在 w-12 附近）
+      this.actionBtnX = this.w - 40 - btnW;
+      this.add(new Button({
+        x: this.actionBtnX,
+        y: this.h / 2 - 30,
+        w: btnW,
+        h: 60,
+        variant: 'text',
+        size: FONT.tiny,
+        text: this.action,
+        onTap: () => this.onAction()
+      }));
+    }
   }
 
   setValue(v) {
@@ -67,90 +100,47 @@ class FormRow extends Widget {
     if (this.pressed) {
       draw.fillRoundRect(ctx, -12, 4, this.w + 24, this.h - 8, RADIUS.md, 'rgba(255,255,255,0.05)');
     }
-    // ⚠️ 标签和值必须占两行。
-    //    之前写成 `this.hint ? 38 : this.h / 2` —— 没有提示的行两者都落在 h/2，
-    //    字直接叠在一起（"称呼""出生日期"这些行都中招）。
+    const cy = this.hint ? 50 : this.h / 2;
     ctx.textBaseline = 'middle';
-    ctx.font = font(FONT.small);
-    ctx.fillStyle = COLOR.ink2;
-    ctx.fillText(this.label, 0, 30);
 
+    // 标签：辅助色一档（不要和值抢）
+    ctx.font = font(FONT.small);
+    ctx.fillStyle = COLOR.ink3;
+    ctx.textAlign = 'left';
+    ctx.fillText(this.label, 0, cy);
+
+    // 从右往左让位：箭头 → 动作按钮（子控件自己画）→ 值
+    let right = this.w - 26;
+    if (this.actionW) right = this.actionBtnX - 10;
+    const labelW = Math.round(text.measure(this.label, font(FONT.small)));
     ctx.font = font(FONT.body);
     ctx.fillStyle = this.valueColor;
-    ctx.fillText(text.singleLine(this.value, this.w - 90 - this.rightPad, font(FONT.body)), 0, 70);
+    ctx.textAlign = 'right';
+    ctx.fillText(text.singleLine(this.value, right - labelW - 24, font(FONT.body)), right, cy);
 
     if (this.hint) {
       ctx.font = font(FONT.micro);
       ctx.fillStyle = COLOR.ink4;
-      ctx.fillText(text.singleLine(this.hint, this.w - 20, font(FONT.micro)), 0, 116);
-    }
-    if (this.chevron) {
-      // 箭头永远贴着行尾：它是"这一行能点开"的记号，不该被右侧按钮挤走
-      ctx.strokeStyle = COLOR.ink4;
-      ctx.lineWidth = 2.5;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(this.w - 14, this.h / 2 - 10);
-      ctx.lineTo(this.w - 4, this.h / 2);
-      ctx.lineTo(this.w - 14, this.h / 2 + 10);
-      ctx.stroke();
-    }
-    if (this.hint) draw.hairline(ctx, 0, this.h - 1, this.w, 'rgba(255,255,255,0.06)');
-  }
-}
-
-/** 分段选择（性别） */
-class Segmented extends Widget {
-  constructor(opts) {
-    super(Object.assign({ tapEnabled: true }, opts));
-    this.items = opts.items || [];
-    this.index = opts.index || 0;
-    this.h = opts.h || 76;
-    this.onChange = opts.onChange || null;
-  }
-
-  onTap(x) {
-    const i = Math.min(this.items.length - 1, Math.max(0, Math.floor((x / this.w) * this.items.length)));
-    if (i === this.index) return;
-    this.index = i;
-    this.dirty();
-    if (this.onChange) this.onChange(i, this.items[i]);
-  }
-
-  drawSelf(ctx) {
-    const n = this.items.length || 1;
-    const gap = 12;
-    const w = (this.w - gap * (n - 1)) / n;
-    this.items.forEach((it, i) => {
-      const x = i * (w + gap);
-      if (i === this.index) {
-        const g = ctx.createLinearGradient(x, 0, x + w, this.h);
-        g.addColorStop(0, COLOR.goldLight);
-        g.addColorStop(1, COLOR.gold);
-        draw.fillRoundRect(ctx, x, 0, w, this.h, RADIUS.md, g);
-      } else {
-        draw.fillRoundRect(ctx, x, 0, w, this.h, RADIUS.md, 'rgba(255,255,255,0.04)');
-        draw.strokeRoundRect(ctx, x, 0, w, this.h, RADIUS.md, COLOR.lineSoft, 1);
-      }
-      ctx.font = font(FONT.body, i === this.index ? '600' : '');
-      ctx.fillStyle = i === this.index ? '#2A1E05' : COLOR.ink2;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(it, x + w / 2, this.h / 2);
       ctx.textAlign = 'left';
-    });
+      ctx.fillText(text.singleLine(this.hint, this.w - 20, font(FONT.micro)), 0, 118);
+    }
+    if (this.chevron) draw.chevron(ctx, this.w - 12, cy, 11, 'rgba(255,255,255,0.30)');
+    draw.hairline(ctx, 0, this.h - 1, this.w, 'rgba(255,255,255,0.06)');
   }
 }
 
-/** 开关行（AI 深化解读 / 保存记录） */
+/** 开关行（AI 深化解读）：标题 + 说明 + 行尾 iOS 开关 */
 class SwitchRow extends Widget {
   constructor(opts) {
     super(Object.assign({ tapEnabled: true }, opts));
     this.title = opts.title || '';
     this.desc = opts.desc || '';
     this.on = !!opts.on;
-    this.h = opts.h || 118;
+    this.h = opts.h || 126;
     this.onChange = opts.onChange || null;
+    this.swW = 100;
+    this.swH = 60;
+    this.t = this.on ? 1 : 0;
   }
 
   onTap() {
@@ -159,27 +149,31 @@ class SwitchRow extends Widget {
     if (this.onChange) this.onChange(this.on);
   }
 
-  drawSelf(ctx) {
-    const sw = 104;
-    const sh = 56;
-    const sx = this.w - sw;
-    const sy = (this.h - sh) / 2;
-    draw.fillRoundRect(ctx, sx, sy, sw, sh, sh / 2, this.on ? 'rgba(232,200,122,0.16)' : 'rgba(255,255,255,0.06)');
-    draw.strokeRoundRect(ctx, sx, sy, sw, sh, sh / 2, this.on ? 'rgba(232,200,122,0.5)' : COLOR.lineSoft, 1);
-    ctx.font = font(FONT.tiny, this.on ? '600' : '');
-    ctx.fillStyle = this.on ? COLOR.gold : COLOR.ink4;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(this.on ? '开' : '关', sx + sw / 2, sy + sh / 2 + 1);
-    ctx.textAlign = 'left';
+  update(dt) {
+    const target = this.on ? 1 : 0;
+    if (Math.abs(this.t - target) < 0.01) {
+      if (this.t !== target) {
+        this.t = target;
+        return true;
+      }
+      return false;
+    }
+    this.t += (target - this.t) * Math.min(1, dt / 110);
+    return true;
+  }
 
+  drawSelf(ctx) {
+    const sx = this.w - this.swW;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
     ctx.font = font(FONT.body);
     ctx.fillStyle = COLOR.ink;
-    ctx.fillText(this.title, 0, sy);
+    ctx.fillText(this.title, 0, 44);
     ctx.font = font(FONT.micro);
-    ctx.fillStyle = COLOR.ink4;
-    const maxW = this.w - sw - 24;
-    ctx.fillText(text.singleLine(this.desc, maxW, font(FONT.micro)), 0, sy + 34);
+    ctx.fillStyle = this.on ? COLOR.ink3 : COLOR.ink4;
+    ctx.fillText(text.singleLine(this.desc, this.w - this.swW - 24, font(FONT.micro)), 0, 82);
+    drawSwitchShape(ctx, sx, (this.h - this.swH) / 2, this.swW, this.swH, this.on, this.t);
+    draw.hairline(ctx, 0, this.h - 1, this.w, 'rgba(255,255,255,0.06)');
   }
 }
 
@@ -227,7 +221,7 @@ class AccountBar extends Widget {
       draw.fillRoundRect(ctx, 0, 0, this.w, this.h, 20, 'rgba(255,255,255,0.05)');
     }
 
-    // 左：微信头像（有的话）+ 文字
+    // 左：微信头像（有的话）+ 金色描边环 + 文字
     const av = 46;
     const ax = 32;
     const ay = (this.h - av) / 2;
@@ -241,6 +235,7 @@ class AccountBar extends Widget {
       ctx.fillText('我', ax + av / 2, ay + av / 2 + 1);
       ctx.textAlign = 'left';
     }
+    draw.avatarRing(ctx, ax + av / 2, ay + av / 2, av / 2 + 3, 0, 0.75);
 
     ctx.font = font(FONT.body, '600');
     ctx.fillStyle = COLOR.ink;
@@ -384,21 +379,16 @@ class HomeScene extends Scene {
     }));
     y += 40;
 
-    // ---- 今日提示 ----
+    // ---- 今日提示（和结果页同一个组件，这里是精简密度） ----
     if (this.today) {
-      const f = this.today.fortune;
-      const chart = this.today.chart;
-      const card = new Card({ x: pad, y, w: contentW, glow: true });
-      card.add(new Label({ x: 0, y: 38, w: contentW - 56, text: copy.UI.todayTitle.replace('{date}', f.date), size: FONT.h3, weight: '600' }));
-      card.add(new Label({ x: 0, y: 38, w: contentW - 56, text: `${f.starText} ${f.levelName}`, size: FONT.small, color: COLOR.gold, align: 'right' }));
-      card.add(new Label({ x: 0, y: 92, w: contentW - 56, text: f.levelDesc, size: FONT.small, color: COLOR.ink2 }));
-      card.add(new Label({ x: 0, y: 148, w: contentW - 56, text: `${copy.UI.todayGood}　${f.good[0]}`, size: FONT.small, color: COLOR.ink }));
-      card.add(new Label({ x: 0, y: 190, w: contentW - 56, text: `${copy.UI.todayBad}　${f.bad[0]}`, size: FONT.small, color: COLOR.ink }));
-      card.add(new Label({ x: 0, y: 232, w: contentW - 56, text: `${copy.UI.todayLucky} ${f.luckyColor.name} · ${copy.UI.todayNumber} ${f.luckyNumber} · ${copy.UI.todayItem} ${f.luckyItem}`, size: FONT.tiny, color: COLOR.ink3 }));
-      card.add(new Label({ x: 0, y: 274, w: contentW - 56, text: copy.UI.todayAxis.replace('{name}', chart.dominant.name), size: FONT.micro, color: COLOR.ink4 }));
-      card.fitHeight(20);
+      const card = new TodayCard({
+        x: pad, y, w: contentW,
+        fortune: this.today.fortune,
+        chart: this.today.chart,
+        full: false
+      });
       scroll.add(card);
-      y += card.h + 24;
+      y += card.h + CARD.gap;
     }
 
     // ---- 生辰表单 ----
@@ -407,59 +397,51 @@ class HomeScene extends Scene {
 
     const form = new Card({ x: pad, y, w: contentW });
     let fy = 0;
-    const innerW = contentW - 56;
+    const innerW = contentW - CARD.pad * 2;
 
     form.add(new FormRow({
-      x: 0, y: fy, w: innerW, label: copy.UI.homeNameLabel, value: this.form.name || '未填写',
-      valueColor: this.form.name ? COLOR.ink : COLOR.ink4,
+      x: 0, y: fy, w: innerW, label: copy.UI.homeNameLabel,
+      value: this.form.name || '未填写',
+      valueColor: this.form.name ? TXT.body : COLOR.ink3,
       onTap: () => this.editName()
     }));
-    fy += 100;
+    fy += 104;
 
-    form.add(new Label({ x: 0, y: fy + 6, w: innerW, text: copy.UI.homeGenderLabel, size: FONT.small, color: COLOR.ink2 }));
-    const seg = new Segmented({
-      x: 0, y: fy + 46, w: innerW, items: GENDERS, index: this.form.genderIndex,
+    form.add(new Label({ x: 0, y: fy + 8, w: innerW, text: copy.UI.homeGenderLabel, size: FONT.small, color: COLOR.ink3 }));
+    form.add(new Segmented({
+      x: 0, y: fy + 48, w: innerW, items: GENDER_ITEMS, index: this.form.genderIndex,
       onChange: (i) => {
         this.form.genderIndex = i;
       }
-    });
-    form.add(seg);
-    fy += 150;
+    }));
+    fy += 156;
 
     form.add(new FormRow({
       x: 0, y: fy, w: innerW, label: copy.UI.homeDateLabel, value: this.form.birthDate,
       onTap: () => this.pickDate()
     }));
-    fy += 100;
+    fy += 104;
 
-    // 时辰行：右侧挂一个「不知道」小按钮。
-    // 有了它就不用"点开滚轮 → 关掉滚轮"来表达"我不记得了"，一步到位。
-    // 排版上是 [值] [不知道] [›]：箭头留在行尾表示"整行可点开"，按钮在它左边。
-    const timePad = 176;
+    // 时辰行：行尾一行金色小字就能表达"我不知道/去填写"，
+    // 不用点开滚轮再关掉，也不用在行右侧悬空挂一个按钮
     form.add(new FormRow({
       x: 0, y: fy, w: innerW,
       label: copy.UI.homeTimeLabel,
       value: this.form.timeKnown ? this.form.birthTime : copy.UI.homeTimeBlank,
-      valueColor: this.form.timeKnown ? COLOR.ink : COLOR.ink4,
+      valueColor: this.form.timeKnown ? TXT.body : COLOR.ink3,
       hint: this.form.timeKnown ? '' : copy.UI.homeTimeHint,
-      rightPad: timePad,
+      action: this.form.timeKnown ? copy.UI.homeTimeDunno : copy.UI.homeTimePick,
+      onAction: () => this.toggleTime(),
       onTap: () => this.pickTime()
     }));
-    form.add(new Button({
-      x: innerW - timePad, y: fy + 42, w: timePad - 24, h: 56,
-      variant: this.form.timeKnown ? 'ghost' : 'primary',
-      size: FONT.small,
-      text: this.form.timeKnown ? copy.UI.homeTimeDunno : copy.UI.homeTimePick,
-      onTap: () => this.toggleTime()
-    }));
-    fy += this.form.timeKnown ? 100 : 148;
+    fy += this.form.timeKnown ? 104 : 150;
 
     form.add(new FormRow({
       x: 0, y: fy, w: innerW, label: copy.UI.homeCityLabel, value: placeLabel(this.form),
       hint: copy.UI.homeCityHint,
       onTap: () => this.pickCity()
     }));
-    fy += 148;
+    fy += 150;
 
     const sw = new SwitchRow({
       x: 0, y: fy, w: innerW, title: copy.UI.homeAiLabel,
@@ -473,12 +455,12 @@ class HomeScene extends Scene {
       }
     });
     form.add(sw);
-    fy += 118;
+    fy += 126;
 
     // 题量：题越多图谱越准。总影响力不变（权重按题量归一，见 core/quiz.js）
-    form.add(new Label({ x: 0, y: fy + 6, w: innerW, text: copy.UI.homeQuizLabel, size: FONT.small, color: COLOR.ink2 }));
+    form.add(new Label({ x: 0, y: fy + 8, w: innerW, text: copy.UI.homeQuizLabel, size: FONT.small, color: COLOR.ink3 }));
     form.add(new Segmented({
-      x: 0, y: fy + 46, w: innerW,
+      x: 0, y: fy + 48, w: innerW,
       items: core.quizCounts.map((n) => copy.fill(copy.UI.homeQuizUnit, { n })),
       index: Math.max(0, core.quizCounts.indexOf(this.quizCount)),
       onChange: (i) => {
@@ -486,7 +468,7 @@ class HomeScene extends Scene {
         storage.setSettings({ quizCount: this.quizCount });
       }
     }));
-    fy += 150;
+    fy += 156;
 
     form.content.h = fy;
     form.fitHeight(0);

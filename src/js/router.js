@@ -1,6 +1,6 @@
 const { Widget, setStage, getStage } = require('./ui/widget.js');
 const { Toast, Modal } = require('./ui/interactive.js');
-const { COLOR } = require('./theme.js');
+const { COLOR, EASE } = require('./theme.js');
 const errview = require('./errview.js');
 
 /**
@@ -20,6 +20,13 @@ class Scene {
     this.alwaysRender = false;
     this.transition = 1; // 1 = 全黑，0 = 完全显示
     this.paused = false;
+    /**
+     * 入场动画进度：内容整体从下往上滑 20px 落位（0 → 1，约 0.3s）。
+     * 用缓出曲线 —— 匀速滑动看起来像"页面在漂"，缓出才像"落位"。
+     * 浮层不参与（弹窗不该跟着页面一起动）。
+     */
+    this.enterT = params && params.noEnter ? 1 : 0;
+    this.enterFrom = params && params.enterFrom !== undefined ? params.enterFrom : 20;
   }
 
   onEnter() {}
@@ -27,8 +34,26 @@ class Scene {
   onPause() {}
   onResume() {}
 
+  /**
+   * 把所有动画跳到终点（入场位移、卡片缩放、数字滚动…）。
+   * 只给布局审计用 —— 见 game-test 的 §17。浮层也要扫，弹窗有滑入动画。
+   */
+  settle() {
+    this.enterT = 1;
+    this.root.settle();
+    this.overlay.settle();
+    return this;
+  }
+
   update(dt, t) {
-    this.root.update(dt, t);
+    // ⚠️ 子控件的"有变化"必须往上报。以前这里丢掉了 root.update 的返回值，
+    //    结果按住按钮的缩放、数字滚动这些动画只有 alwaysRender 的页面才会动，
+    //    别的页面会卡在第一帧（而且不报错，极难查）。
+    let changed = this.root.update(dt, t);
+    if (this.enterT < 1) {
+      this.enterT = Math.min(1, this.enterT + dt / 300);
+      changed = true;
+    }
     // 浮层里的临时控件（提示条）到点了自己清理
     this.overlay.children.slice().forEach((c) => {
       if (c.dead) this.overlay.clearChild(c);
@@ -36,16 +61,25 @@ class Scene {
     // ⚠️ 浮层必须保持全屏尺寸，绝不能 sizeToChildren()。
     // 它一旦被缩到提示条的高度，后续所有点击都会从浮层穿透下去，
     // 弹窗按钮就点不动了 —— 这个坑真实踩过。
-    this.overlay.update(dt, t);
+    if (this.overlay.update(dt, t)) changed = true;
     if (this.transition > 0) {
       this.transition = Math.max(0, this.transition - dt / 260);
-      return true;
+      changed = true;
     }
-    return false;
+    return changed;
   }
 
   draw(ctx, stage, t) {
+    const p = EASE.outCubic(this.enterT);
+    ctx.save();
+    // 淡入只做很浅的一段：场景转场那层背板才是真正的"遮黑→显出"，
+    // 这里再来一次大范围透明度会露馅（canvas 是 clearRect 过的，太透明会透出网页底色）
+    if (this.enterT < 1) {
+      ctx.globalAlpha *= 0.86 + 0.14 * p;
+      ctx.translate(0, (1 - p) * this.enterFrom);
+    }
     this.root.draw(ctx, stage, t);
+    ctx.restore();
     this.overlay.draw(ctx, stage, t);
     if (this.transition > 0) {
       ctx.save();

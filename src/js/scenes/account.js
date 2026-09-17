@@ -2,9 +2,10 @@ const { Scene } = require('../router.js');
 const { Widget, Label, Paragraph, Card, Panel, SectionTitle, HLine, Hotspot } = require('../ui/widget.js');
 const { Button, ScrollView } = require('../ui/interactive.js');
 const { Starfield, TabBar } = require('../ui/game.js');
-const { COLOR, FONT, font, RADIUS } = require('../theme.js');
+const { COLOR, CARD, FONT, font, RADIUS } = require('../theme.js');
 const draw = require('../draw.js');
 const text = require('../text.js');
+const icons = require('../ui/icon.js');
 const copy = require('../../../config/copy.js');
 const { CONFIG } = require('../../../config/index.js');
 const entitlement = require('../../../services/entitlement.js');
@@ -61,14 +62,15 @@ class Row extends Widget {
   }
 }
 
-/** 带箭头的入口行 */
+/** 带箭头的入口行（前置图标 + 标题 + 右侧值 + 箭头） */
 class EntryRow extends Widget {
   constructor(opts) {
     super(Object.assign({ tapEnabled: true }, opts));
     this.title = opts.title || '';
     this.value = opts.value || '';
+    this.icon = opts.icon || '';
     this.valueColor = opts.valueColor || COLOR.ink3;
-    this.h = opts.h || 96;
+    this.h = opts.h || 112;
     this.handler = opts.onTap || null;
     this.pressed = false;
   }
@@ -93,25 +95,24 @@ class EntryRow extends Widget {
     }
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
+    let tx = 0;
+    if (this.icon) {
+      // 前置图标统一 40、60% 透明 —— "退后一档"是列表图标的规范动作
+      icons.drawIcon(ctx, this.icon, 20, this.h / 2, 40, COLOR.ink, 0.6);
+      tx = 56;
+    }
     ctx.font = font(FONT.body);
     ctx.fillStyle = COLOR.ink;
-    ctx.fillText(this.title, 0, this.h / 2);
+    ctx.fillText(this.title, tx, this.h / 2);
 
     if (this.value) {
       ctx.font = font(FONT.small);
       ctx.fillStyle = this.valueColor;
       ctx.textAlign = 'right';
-      ctx.fillText(this.value, this.w - 28, this.h / 2);
+      ctx.fillText(text.singleLine(this.value, this.w - 60 - tx, font(FONT.small)), this.w - 40, this.h / 2);
+      ctx.textAlign = 'left';
     }
-    ctx.strokeStyle = COLOR.ink4;
-    ctx.lineWidth = 2.5;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(this.w - 14, this.h / 2 - 9);
-    ctx.lineTo(this.w - 5, this.h / 2);
-    ctx.lineTo(this.w - 14, this.h / 2 + 9);
-    ctx.stroke();
-    ctx.textAlign = 'left';
+    draw.chevron(ctx, this.w - 14, this.h / 2, 11, 'rgba(255,255,255,0.30)');
   }
 }
 
@@ -139,6 +140,8 @@ class AvatarRow extends Widget {
     this.seed = opts.seed || 7;
     this.nativeOk = !!opts.nativeOk;
     this.btnText = opts.btnText || '';
+    /** 副标题是"需要用户注意的状态"（登录过期 / 连不上）时画成黄色小胶囊 */
+    this.subPill = !!opts.subPill;
     this.cx = 0;
     this.cy = 0;
     this.btn = { x: 0, y: 0, w: 0, h: 0 };
@@ -161,17 +164,30 @@ class AvatarRow extends Widget {
       ctx.fillText(first, cx, cy + 1);
       ctx.textAlign = 'left';
     }
+    // 金色描边环：让头像和深色底分开（也统一了各页头像的观感）
+    draw.avatarRing(ctx, cx, cy, r + 3, 0, 0.85);
 
     const tx = cx + r + 24;
     ctx.textBaseline = 'middle';
-    ctx.font = font(FONT.h3, '600');
+    ctx.font = font(FONT.h2, '600');
     ctx.fillStyle = this.nickName ? COLOR.ink : COLOR.ink4;
-    ctx.fillText(text.singleLine(this.nickName || copy.UI.accountNicknameEmpty, this.btn.x - tx - 20, font(FONT.h3, '600')), tx, cy - 14);
+    ctx.fillText(text.singleLine(this.nickName || copy.UI.accountNicknameEmpty, this.btn.x - tx - 20, font(FONT.h2, '600')), tx, cy - 16);
 
     if (this.sub) {
-      ctx.font = font(FONT.micro);
-      ctx.fillStyle = COLOR.ink4;
-      ctx.fillText(text.singleLine(this.sub, this.btn.x - tx - 20, font(FONT.micro)), tx, cy + 22);
+      const pf = font(FONT.micro, this.subPill ? '600' : '');
+      ctx.font = pf;
+      if (this.subPill) {
+        const pw = Math.round(text.measure(this.sub, pf)) + 28;
+        draw.fillRoundRect(ctx, tx, cy + 4, pw, 40, 20, 'rgba(232,200,122,0.16)');
+        draw.strokeRoundRect(ctx, tx, cy + 4, pw, 40, 20, 'rgba(232,200,122,0.5)', 1);
+        ctx.fillStyle = COLOR.gold;
+        ctx.textAlign = 'center';
+        ctx.fillText(this.sub, tx + pw / 2, cy + 25);
+        ctx.textAlign = 'left';
+      } else {
+        ctx.fillStyle = COLOR.ink3;
+        ctx.fillText(text.singleLine(this.sub, this.btn.x - tx - 20, pf), tx, cy + 24);
+      }
     }
 
     // 原生按钮创建失败时的兜底：自己画一个胶囊，点了给提示
@@ -198,8 +214,8 @@ const CARD_H = 128;
 
 /**
  * 一张资料卡。
- * 点主体 = 用这张卡直接开始占卜；点右上角的 × = 删除。
- * 两者共用一个控件，所以 onTap 要自己判断点在哪个区域。
+ * 点主体 = 用这张卡直接开始占卜；点右上角的 ✕ = 删除；点「编辑」= 改资料。
+ * 三个动作共用一个控件，所以 onTap 要自己判断点在哪个区域。
  */
 class ProfileCard extends Widget {
   constructor(opts) {
@@ -207,13 +223,23 @@ class ProfileCard extends Widget {
     this.profile = opts.profile;
     this.active = !!opts.active;
     this.h = CARD_H;
+    this.pressScale = 0.97;
     this.onStart = opts.onStart || null;
     this.onDelete = opts.onDelete || null;
+    this.onEdit = opts.onEdit || null;
+    this.editW = Math.round(text.measure(copy.UI.accountProfileEdit, font(FONT.micro, '600')));
   }
 
-  /** × 的命中区（本地坐标：右上角 72×72） */
+  /** ✕ 的命中区（本地坐标：右上角 76×76） */
   inDeleteZone(lx, ly) {
     return lx >= this.w - 76 && ly <= 76;
+  }
+
+  /** 「编辑」的命中区（名字右侧那一小条） */
+  inEditZone(lx, ly) {
+    if (!this.onEdit) return false;
+    const x = this.editX;
+    return lx >= x - 12 && lx <= x + this.editW + 12 && ly >= 20 && ly <= 68;
   }
 
   onTap(lx, ly) {
@@ -222,60 +248,73 @@ class ProfileCard extends Widget {
       if (this.onDelete) this.onDelete(this.profile);
       return;
     }
+    if (this.inEditZone(local.x, local.y)) {
+      if (this.onEdit) this.onEdit(this.profile);
+      return;
+    }
     if (this.onStart) this.onStart(this.profile);
   }
 
   drawSelf(ctx) {
     const p = this.profile;
-    draw.fillRoundRect(ctx, 0, 0, this.w, this.h, RADIUS.md,
-      this.active ? 'rgba(232,200,122,0.10)' : COLOR.panel);
-    draw.strokeRoundRect(ctx, 0, 0, this.w, this.h, RADIUS.md,
-      this.active ? COLOR.line : COLOR.lineSoft, this.active ? 1.4 : 1);
+    draw.fillRoundRect(ctx, 0, 0, this.w, this.h, CARD.radius,
+      this.active ? 'rgba(232,200,122,0.10)' : CARD.fill);
+    draw.strokeRoundRect(ctx, 0, 0, this.w, this.h, CARD.radius,
+      this.active ? COLOR.gold : 'rgba(255,255,255,0.08)', this.active ? 1.4 : 1);
 
-    // 小徽记：和角色卡同一套视觉语言
+    // 小徽记：和角色卡同一套视觉语言，统一走金色系
     const av = 56;
     const ax = 22;
     const ay = (this.h - av) / 2;
     const seed = ((p.name || p.birthDate || 'x').length + (p.birthDate || '').length) * 7;
-    draw.emblem(ctx, ax + av / 2, ay + av / 2, av / 2, seed,
-      this.active ? COLOR.gold : 'rgba(255,255,255,0.5)', false);
+    draw.emblem(ctx, ax + av / 2, ay + av / 2, av / 2, seed, COLOR.gold, false);
     ctx.font = font(24, '700');
     ctx.fillStyle = 'rgba(255,255,255,0.92)';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText((p.name || '?').slice(0, 1), ax + av / 2, ay + av / 2 + 2);
     ctx.textAlign = 'left';
+    draw.avatarRing(ctx, ax + av / 2, ay + av / 2, av / 2 + 3, 0, this.active ? 0.9 : 0.4);
 
     const tx = ax + av + 20;
-    const tw = this.w - tx - 80;
-    ctx.font = font(FONT.h3, '600');
+    const tw = this.w - tx - 88;
+    ctx.font = font(FONT.cardTitle, '600');
     ctx.fillStyle = COLOR.ink;
-    ctx.fillText(text.singleLine(p.name || '未命名', tw, font(FONT.h3, '600')), tx, CARD_LINE.name);
+    ctx.fillText(text.singleLine(p.name || '未命名', tw, font(FONT.cardTitle, '600')), tx, CARD_LINE.name);
+
+    // 「编辑」贴着名字右边（金描边小胶囊），删除在右上角 ✕
+    ctx.font = font(FONT.micro, '600');
+    const nameW = Math.min(tw, Math.round(text.measure(p.name || '未命名', font(FONT.cardTitle, '600'))));
+    this.editX = tx + nameW + 18;
+    if (this.onEdit) {
+      draw.fillRoundRect(ctx, this.editX - 12, 24, this.editW + 24, 44, 22, 'rgba(232,200,122,0.10)');
+      draw.strokeRoundRect(ctx, this.editX - 12, 24, this.editW + 24, 44, 22, 'rgba(232,200,122,0.45)', 1);
+      ctx.fillStyle = COLOR.gold;
+      ctx.fillText(copy.UI.accountProfileEdit, this.editX, 46);
+    }
 
     const sub = [p.birthDate, p.timeKnown ? p.birthTime : copy.UI.accountProfileTimeUnknown, p.cityLabel || p.city]
       .filter(Boolean)
       .join(' · ');
     ctx.font = font(FONT.micro);
-    ctx.fillStyle = COLOR.ink4;
-    ctx.fillText(text.singleLine(sub, tw, font(FONT.micro)), tx, CARD_LINE.sub);
+    ctx.fillStyle = COLOR.ink3;
+    ctx.fillText(text.singleLine(sub, tw + 30, font(FONT.micro)), tx, CARD_LINE.sub);
 
-    // 删除（×）
-    const cx = this.w - 38;
-    const cy = 38;
-    ctx.strokeStyle = COLOR.ink4;
-    ctx.lineWidth = 2;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(cx - 8, cy - 8);
-    ctx.lineTo(cx + 8, cy + 8);
-    ctx.moveTo(cx + 8, cy - 8);
-    ctx.lineTo(cx - 8, cy + 8);
-    ctx.stroke();
+    // 删除（✕）
+    icons.drawIcon(ctx, 'cross', this.w - 38, 38, 30, COLOR.ink3, 0.8, 2);
 
+    // 「默认」做成金色小徽章（不是一行灰字）
     if (this.active) {
-      ctx.font = font(FONT.micro);
+      const badge = copy.UI.accountProfileDefault;
+      const bf = font(FONT.micro, '600');
+      const bw = Math.round(text.measure(badge, bf)) + 28;
+      draw.fillRoundRect(ctx, tx - 4, CARD_LINE.badge - 20, bw, 40, 20, 'rgba(232,200,122,0.16)');
+      draw.strokeRoundRect(ctx, tx - 4, CARD_LINE.badge - 20, bw, 40, 20, 'rgba(232,200,122,0.5)', 1);
+      ctx.font = bf;
       ctx.fillStyle = COLOR.gold;
-      ctx.fillText('默认', tx, CARD_LINE.badge);
+      ctx.textAlign = 'center';
+      ctx.fillText(badge, tx - 4 + bw / 2, CARD_LINE.badge);
+      ctx.textAlign = 'left';
     }
   }
 }
@@ -442,6 +481,8 @@ class AccountScene extends Scene {
       x: 0, y: avTop, w: W, h: AVATAR_ROW_H,
       nickName: (this.wechat && this.wechat.nickName) || '',
       sub: statusText0,
+      // 只有"要用户注意"的状态才做成胶囊；正常/开发模式还是普通小字
+      subPill: statusText0 === copy.UI.accountExpired || statusText0 === copy.UI.accountOffline,
       getAvatar: () => this.avatarImg,
       seed: 29,
       nativeOk: this.nativeOk,
@@ -481,28 +522,42 @@ class AccountScene extends Scene {
     }));
     y += 96;
 
-    // ---------- 可用次数（最上面：用户最关心"还能占几次"） ----------
+    // ---------- 可用次数（最上面：用户最关心"还能算几次"） ----------
+    // 用完时不再只给一行红字：左边"免费次数 + 两个空了的小圆点"，
+    // 右边一个行内「+ 解锁」按钮，把"补次数"的路径缩到一步。
     const quotaCard = new Card({ x: pad, y, w: contentW, glow: true });
-    const quotaText = st.hasPass
-      ? copy.fill(copy.UI.accountQuotaPass, { days: st.passDays })
-      : st.freeLeft > 0
-      ? copy.fill(copy.UI.accountQuotaFree, { n: st.freeLeft })
-      : st.tickets > 0
-      ? copy.fill(copy.UI.accountQuotaTicket, { n: st.tickets })
-      : copy.UI.accountQuotaNone;
-    const quotaColor = st.hasPass || st.freeLeft > 0 || st.tickets > 0 ? COLOR.gold : COLOR.red;
+    const innerQ = contentW - CARD.pad * 2;
+    const hasQuota = st.hasPass || st.freeLeft > 0 || st.tickets > 0;
+    quotaCard.add(new Label({
+      x: 0, y: 0, w: innerQ, text: copy.UI.accountQuotaTitle, size: FONT.body, color: COLOR.ink3
+    }));
 
-    quotaCard.add(new Label({
-      x: 0, y: 0, w: contentW - 56, text: copy.UI.accountQuotaTitle, size: FONT.small, color: COLOR.ink4
-    }));
-    quotaCard.add(new Label({
-      x: 0, y: 0, w: contentW - 56, align: 'right', text: quotaText,
-      size: FONT.h3, weight: '700', color: quotaColor
-    }));
+    if (hasQuota) {
+      const quotaText = st.hasPass
+        ? copy.fill(copy.UI.accountQuotaPass, { days: st.passDays })
+        : st.freeLeft > 0
+        ? copy.fill(copy.UI.accountQuotaFree, { n: st.freeLeft })
+        : copy.fill(copy.UI.accountQuotaTicket, { n: st.tickets });
+      quotaCard.add(new Label({
+        x: 0, y: 0, w: innerQ, align: 'right', text: quotaText,
+        size: FONT.h3, weight: '700', color: COLOR.gold
+      }));
+    } else {
+      // 两个灰色小圆点 = "两格都空了"，比"已用完"三个字更直观
+      const dots = new Widget({ x: 0, y: 8, w: 120, h: 34 });
+      dots.drawSelf = (ctx) => icons.drawIcon(ctx, 'dots', 22, 17, 34, COLOR.ink4, 0.55);
+      quotaCard.add(dots);
+      const unlockBtn = new Button({
+        x: innerQ - 168, y: -8, w: 168, h: 60, variant: 'ghost', size: FONT.small,
+        text: copy.UI.accountQuotaUnlock,
+        onTap: () => this.unlockHere()
+      });
+      quotaCard.add(unlockBtn);
+    }
     quotaCard.content.h = 46;
     quotaCard.fitHeight(0);
     scroll.add(quotaCard);
-    y += quotaCard.h + 24;
+    y += quotaCard.h + CARD.gap;
 
     // ---------- 资料卡 ----------
     scroll.add(new SectionTitle({ x: pad, y, w: contentW, text: copy.UI.accountProfilesTitle }));
@@ -518,6 +573,7 @@ class AccountScene extends Scene {
         const card = new ProfileCard({
           x: pad, y, w: contentW, profile: p, active: p.id === this.activeId,
           onStart: (prof) => this.startWith(prof),
+          onEdit: (prof) => this.editProfile(prof),
           onDelete: (prof) => this.deleteProfile(prof)
         });
         scroll.add(card);
@@ -526,13 +582,15 @@ class AccountScene extends Scene {
     }
 
     const addBtn = new Button({
-      x: pad, y, w: contentW, variant: 'ghost', small: true,
+      x: pad, y, w: contentW, small: true,
+      // 虚线描边的"添加"：一眼看出这是"再加一张"，而不是又一个普通操作
+      variant: 'dashed',
       text: copy.UI.accountProfileAdd,
       onTap: () => this.newProfile()
     });
     addBtn.setEnabled(this.profiles.length < storage.MAX_PROFILES);
     scroll.add(addBtn);
-    y += 92;
+    y += 104;
 
     if (!this.profiles.length) {
       scroll.add(new Paragraph({
@@ -551,16 +609,19 @@ class AccountScene extends Scene {
     const entries = [
       {
         title: copy.UI.accountEntryCodex,
+        icon: 'book',
         value: copy.fill(copy.UI.accountCount, { n: this.codexCount, total: CHARACTERS.length }),
         onTap: () => this.stage.router.push('codex')
       },
       {
         title: copy.UI.accountEntryRecords,
+        icon: 'clock',
         value: copy.fill(copy.UI.accountRecordsCount, { n: this.recordCount }),
         onTap: () => this.stage.router.push('records')
       },
       {
         title: copy.UI.accountEntryRecharge,
+        icon: 'ticket',
         value: st.hasPass ? copy.fill(copy.UI.rechargePassOn, { days: st.passDays }) : '',
         valueColor: COLOR.gold,
         onTap: () => this.stage.router.push('recharge')
@@ -569,29 +630,30 @@ class AccountScene extends Scene {
     let ey = 0;
     entries.forEach((e, i) => {
       entriesCard.add(new EntryRow({
-        x: 0, y: ey, w: contentW - 56, title: e.title, value: e.value,
+        x: 0, y: ey, w: contentW - CARD.pad * 2, title: e.title, icon: e.icon, value: e.value,
         valueColor: e.valueColor, onTap: e.onTap
       }));
-      ey += 96;
-      if (i < entries.length - 1) entriesCard.add(new HLine({ x: 0, y: ey - 1, w: contentW - 56 }));
+      ey += 112;
+      if (i < entries.length - 1) entriesCard.add(new HLine({ x: 0, y: ey - 1, w: contentW - CARD.pad * 2 }));
     });
     entriesCard.content.h = ey;
     entriesCard.fitHeight(0);
     scroll.add(entriesCard);
-    y += entriesCard.h + 28;
+    y += entriesCard.h + CARD.gap;
 
     // ---------- 设置 ----------
     const settingsCard = new Card({ x: pad, y, w: contentW });
     settingsCard.add(new EntryRow({
-      x: 0, y: 0, w: contentW - 56,
+      x: 0, y: 0, w: contentW - CARD.pad * 2,
       title: copy.UI.accountSettings,
+      icon: 'gear',
       value: '',
       onTap: () => this.stage.router.push('profile')
     }));
-    settingsCard.content.h = 96;
+    settingsCard.content.h = 112;
     settingsCard.fitHeight(0);
     scroll.add(settingsCard);
-    y += settingsCard.h + 28;
+    y += settingsCard.h + CARD.gap;
 
     // ---------- 账号信息 ----------
     scroll.add(new SectionTitle({ x: pad, y, w: contentW, text: '账号' }));
@@ -636,16 +698,16 @@ class AccountScene extends Scene {
     }
     let iy = 0;
     infoRows.forEach((r, i) => {
-      infoCard.add(new Row({ x: 0, y: iy, w: contentW - 56, k: r.k, v: r.v, vColor: r.vColor }));
+      infoCard.add(new Row({ x: 0, y: iy, w: contentW - CARD.pad * 2, k: r.k, v: r.v, vColor: r.vColor }));
       iy += 64;
-      if (i < infoRows.length - 1) infoCard.add(new HLine({ x: 0, y: iy - 1, w: contentW - 56 }));
+      if (i < infoRows.length - 1) infoCard.add(new HLine({ x: 0, y: iy - 1, w: contentW - CARD.pad * 2 }));
     });
     // 离线时把"为什么 + 怎么办"补在这张卡里（Row 的值是右对齐单行，放不下这么长的话）
     if (offline) {
       const hintText = [s.reasonText, s.reasonHint].filter(Boolean).join('\n');
       if (hintText) {
         const hp = new Paragraph({
-          x: 0, y: iy + 6, w: contentW - 56, text: hintText,
+          x: 0, y: iy + 6, w: contentW - CARD.pad * 2, text: hintText,
           size: FONT.micro, color: COLOR.ink4, lineHeight: 34
         });
         infoCard.add(hp);
@@ -827,6 +889,34 @@ class AccountScene extends Scene {
       storage.removeProfile(profile.id);
       this.reloadLocal();
       this.toast(copy.UI.accountProfileDeleted);
+      this.build();
+    });
+  }
+
+  /**
+   * 「编辑」：把这张卡设为默认并回首页改。
+   * 首页已经有日期/时辰/城市选择器，没必要在账号页再造一套。
+   */
+  editProfile(profile) {
+    storage.setActiveProfileId(profile.id);
+    storage.setProfile(profile);
+    this.reloadLocal();
+    this.stage.router.reset('home');
+    this.toast('改完保存，这张卡就是默认的');
+  }
+
+  /**
+   * 次数用完时，行内那个「+ 解锁」按钮：直接弹解锁面板。
+   *
+   * 刻意**不走 gate.requestAccess** —— 那是"要开始一次占卜"的入口，会消耗一次额度。
+   * 这里只是补次数，等价于解锁面板里的那条路：看广告 → 发券。
+   */
+  unlockHere() {
+    const { showUnlock } = require('../ui/unlock.js');
+    showUnlock(this).then((r) => {
+      if (!r || !r.ok) return;
+      this.toast(copy.UI.rechargeAdOk);
+      this.reloadLocal();
       this.build();
     });
   }

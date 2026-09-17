@@ -1,15 +1,17 @@
 const { Scene } = require('../router.js');
-const { Widget, Label, Paragraph, Card, Panel, SectionTitle, HLine, Hotspot } = require('../ui/widget.js');
+const { Widget, Label, Paragraph, Card, Panel, SectionTitle, HLine, Hotspot, IconText } = require('../ui/widget.js');
 const { Button, ScrollView } = require('../ui/interactive.js');
-const { Starfield, TopBar, CharCard, DimBars, FateTags } = require('../ui/game.js');
-const { COLOR, FONT, font, RADIUS } = require('../theme.js');
+const { Starfield, TopBar, CharCard, DimBars, FateTags, TodayCard } = require('../ui/game.js');
+const { COLOR, CARD, FONT, font, RADIUS, TXT } = require('../theme.js');
 const draw = require('../draw.js');
 const text = require('../text.js');
+const icons = require('../ui/icon.js');
 const copy = require('../../../config/copy.js');
 const { RARITY } = require('../../../data/characters.js');
 const share = require('../../../services/share.js');
 const reward = require('../../../services/reward.js');
 const analytics = require('../../../services/analytics.js');
+const poster = require('../poster.js');
 
 /** 一行"键 → 值"，下面可以带一句注解 */
 class KVRow extends Widget {
@@ -24,19 +26,77 @@ class KVRow extends Widget {
 
   drawSelf(ctx) {
     ctx.font = font(FONT.small);
-    ctx.fillStyle = COLOR.ink4;
+    ctx.fillStyle = COLOR.ink3;
     ctx.textBaseline = 'middle';
     ctx.fillText(this.k, 0, 26);
-    ctx.font = font(FONT.body);
+    ctx.font = font(FONT.body, '600');
     ctx.fillStyle = this.vColor;
     ctx.textAlign = 'right';
-    ctx.fillText(text.singleLine(this.v, this.w - 140, font(FONT.body)), this.w, 26);
+    ctx.fillText(text.singleLine(this.v, this.w - 140, font(FONT.body, '600')), this.w, 26);
     ctx.textAlign = 'left';
     if (this.note) {
       ctx.font = font(FONT.micro);
       ctx.fillStyle = COLOR.ink4;
       ctx.textAlign = 'right';
       ctx.fillText(text.singleLine(this.note, this.w - 140, font(FONT.micro)), this.w, 58);
+      ctx.textAlign = 'left';
+    }
+  }
+}
+
+/**
+ * 命运对照卡：左右两栏 + 中间一个金色的 VS。
+ *
+ * 原来这里是一行紫色小字（"你偏随性，TA 偏执念"），整页最该有画面感的地方
+ * 长得像一句注释（用户原话："中间那个灰色空框像 bug"）。
+ * 数据是现成的（opp 里有两边在同一个轴上的取值），只是从来没被画出来。
+ */
+class VersusRow extends Widget {
+  constructor(opts) {
+    super(opts);
+    const o = opts || {};
+    this.axisName = o.axisName || '';
+    this.you = o.you || '';
+    this.ta = o.ta || '';
+    this.h = this.axisName ? 208 : 172;
+  }
+
+  drawSelf(ctx) {
+    const colW = (this.w - 96) / 2;
+    const boxH = 132;
+    const cx = this.w / 2;
+
+    const col = (x, label, value, color) => {
+      draw.fillRoundRect(ctx, x, 0, colW, boxH, CARD.radius, 'rgba(255,255,255,0.04)');
+      draw.strokeRoundRect(ctx, x, 0, colW, boxH, CARD.radius, 'rgba(255,255,255,0.08)', 1);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = font(FONT.tiny);
+      ctx.fillStyle = COLOR.ink3;
+      ctx.fillText(label, x + colW / 2, 40);
+      ctx.font = font(FONT.h3, '700');
+      ctx.fillStyle = color;
+      ctx.fillText(text.singleLine(value, colW - 24, font(FONT.h3, '700')), x + colW / 2, 88);
+    };
+
+    col(0, copy.UI.resultCompareYou, this.you, COLOR.ink);
+    col(this.w - colW, copy.UI.resultCompareTa, this.ta, COLOR.gold);
+
+    // 中间的 VS：金色 + 两侧一条极细的引线
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = font(FONT.h3, '700');
+    ctx.fillStyle = COLOR.gold;
+    ctx.fillText('VS', cx, boxH / 2);
+    ctx.textAlign = 'left';
+    draw.hairline(ctx, cx - 68, boxH / 2, cx - 26, 'rgba(232,200,122,0.35)');
+    draw.hairline(ctx, cx + 26, boxH / 2, cx + 68, 'rgba(232,200,122,0.35)');
+
+    if (this.axisName) {
+      ctx.textAlign = 'center';
+      ctx.font = font(FONT.tiny);
+      ctx.fillStyle = COLOR.ink3;
+      ctx.fillText(`「${this.axisName}」这一轴`, cx, boxH + 40);
       ctx.textAlign = 'left';
     }
   }
@@ -149,64 +209,78 @@ class ResultScene extends Scene {
     let y = 8;
 
     // ---- 标题 + 标签 ----
+    // 大标题用**白色**：金色让给下面的共振数字和稀有度标签，
+    // 满页金字会让"金"贬值（"哪儿都是金就等于哪儿都不金"）
     scroll.add(new Label({
-      x: pad, y, w: contentW, text: c.title, size: FONT.h1, weight: '700', color: COLOR.gold
+      x: pad, y, w: contentW, text: c.title, size: FONT.h1, weight: '700', color: TXT.title
     }));
-    y += 72;
+    y += 74;
     scroll.add(new Paragraph({
-      x: pad, y, w: contentW, text: c.subtitle, size: FONT.small, color: COLOR.ink2, lineHeight: 40
+      x: pad, y, w: contentW, text: c.subtitle, size: FONT.small, color: TXT.sub, lineHeight: 40
     }));
-    y += 56;
+    y += 60;
 
     const tags = [{ name: copy.UI.resultResonanceTag.replace('{n}', String(main.resonance)), special: true }, { name: main.rarity.label }];
     if (this.outcome && this.outcome.source === 'ai') tags.push({ name: 'AI 深化解读', special: false });
     if (this.outcome && this.outcome.source === 'cache') tags.push({ name: 'AI 解读 · 同盘同解', special: false });
     const tagRow = new FateTags({ x: pad, y, w: contentW, tags });
     scroll.add(tagRow);
-    y += 68;
+    y += 72;
 
-    // ---- 主推角色 ----
+    // ---- 主推角色（入场缩放 + 光晕扩散，共振大数字在名字右侧） ----
     const mainCard = new CharCard({
       x: pad, y, w: contentW, char: main.char, rarity: main.rarity, resonance: main.resonance,
       size: 'lg',
       onTap: () => this.stage.router.push('character', { id: main.char.id })
     });
     scroll.add(mainCard);
-    y += mainCard.h + 24;
+    y += mainCard.h + CARD.gap;
 
     if (main.sharedFates.length) {
-      scroll.add(new Label({ x: pad, y, w: contentW, text: copy.UI.resultShared, size: FONT.micro, color: COLOR.ink4 }));
-      y += 34;
+      scroll.add(new Label({ x: pad, y, w: contentW, text: copy.UI.resultShared, size: FONT.tiny, color: COLOR.ink3 }));
+      y += 36;
       const shared = new FateTags({
         x: pad, y, w: contentW,
         tags: main.sharedFates.map((f) => ({ name: f.name, special: true }))
       });
       scroll.add(shared);
-      y += 64;
+      y += 68;
     }
 
-    // ---- 图谱解读 ----
+    // ---- 图谱解读（首字位置放一个金色引号） ----
     y = this.section(scroll, pad, contentW, y, copy.UI.resultEssenceTitle);
     const essenceCard = new Card({ x: pad, y, w: contentW, glow: true });
-    const essencePara = new Paragraph({ x: 0, y: 0, w: contentW - 56, text: c.essence, size: FONT.body, lineHeight: 52, color: COLOR.ink });
+    const quote = new Widget({ x: 0, y: 0, w: 60, h: 40 });
+    quote.drawSelf = (ctx) => draw.quoteMark(ctx, 0, 0, 46, COLOR.gold, 0.34);
+    essenceCard.add(quote);
+    const essencePara = new Paragraph({
+      x: 0, y: 46, w: contentW - CARD.pad * 2, text: c.essence, size: FONT.body, lineHeight: 52, color: TXT.body
+    });
     essenceCard.add(essencePara);
+    essenceCard.content.h = 46 + essencePara.h;
     essenceCard.fitHeight(0);
     scroll.add(essenceCard);
-    y += essenceCard.h + 28;
+    y += essenceCard.h + CARD.gap;
 
-    // ---- 你携带的命途 ----
+    // ---- 你携带的命途（金色小竖条 + 命途名 + 释义） ----
+    y = this.section(scroll, pad, contentW, y, copy.UI.resultFateTitle);
     const fateCard = new Card({ x: pad, y, w: contentW });
+    const innerW = contentW - CARD.pad * 2;
     let fy = 0;
     chart.fates.forEach((f) => {
-      fateCard.add(new Label({ x: 0, y: fy, w: contentW - 56, text: f.name, size: FONT.h3, weight: '600', color: COLOR.gold }));
-      const p = new Paragraph({ x: 0, y: fy + 44, w: contentW - 56, text: f.summary, size: FONT.small, color: COLOR.ink2, lineHeight: 42 });
+      // 金色小竖条：命途名是这一节的"关键词"，和金条一起构成小标题
+      fateCard.add(new Panel({ x: 0, y: fy + 8, w: 6, h: 30, radius: 3, fill: COLOR.gold }));
+      fateCard.add(new Label({ x: 20, y: fy, w: innerW - 20, text: f.name, size: FONT.h3, weight: '600', color: COLOR.gold }));
+      const p = new Paragraph({
+        x: 20, y: fy + 48, w: innerW - 20, text: f.summary, size: FONT.small, color: TXT.sub, lineHeight: 46
+      });
       fateCard.add(p);
-      fy += 44 + p.h + 26;
+      fy += 48 + p.h + 30;
     });
-    fateCard.content.h = fy;
+    fateCard.content.h = Math.max(0, fy - 30);
     fateCard.fitHeight(0);
     scroll.add(fateCard);
-    y += fateCard.h + 28;
+    y += fateCard.h + CARD.gap;
 
     // ---- 命途图谱全相 ----
     y = this.section(scroll, pad, contentW, y, copy.UI.resultChartTitle);
@@ -214,11 +288,11 @@ class ResultScene extends Scene {
     const rows = this.chartRows(chart, isDraw);
     let ry = 0;
     rows.forEach((row, i) => {
-      const kv = new KVRow({ x: 0, y: ry, w: contentW - 56, k: row.k, v: row.v, note: row.note });
+      const kv = new KVRow({ x: 0, y: ry, w: contentW - CARD.pad * 2, k: row.k, v: row.v, note: row.note });
       chartCard.add(kv);
       ry += kv.h;
       if (i < rows.length - 1) {
-        const line = new HLine({ x: 0, y: ry - 1, w: contentW - 56 });
+        const line = new HLine({ x: 0, y: ry - 1, w: contentW - CARD.pad * 2 });
         chartCard.add(line);
       }
     });
@@ -230,7 +304,7 @@ class ResultScene extends Scene {
     // ---- 八轴 ----
     y = this.section(scroll, pad, contentW, y, copy.UI.resultAxesTitle);
     const axisCard = new Card({ x: pad, y, w: contentW });
-    const bars = new DimBars({ x: 0, y: 0, w: contentW - 56, axes: chart.axes });
+    const bars = new DimBars({ x: 0, y: 0, w: contentW - CARD.pad * 2, axes: chart.axes });
     axisCard.add(bars);
     axisCard.content.h = bars.h;
     axisCard.fitHeight(0);
@@ -240,7 +314,7 @@ class ResultScene extends Scene {
     // ---- 为什么是 TA ----
     y = this.section(scroll, pad, contentW, y, copy.UI.resultResonanceTitle);
     const resCard = new Card({ x: pad, y, w: contentW });
-    const resPara = new Paragraph({ x: 0, y: 0, w: contentW - 56, text: c.resonance, size: FONT.body, lineHeight: 52, color: COLOR.ink });
+    const resPara = new Paragraph({ x: 0, y: 0, w: contentW - CARD.pad * 2, text: c.resonance, size: FONT.body, lineHeight: 52, color: COLOR.ink });
     resCard.add(resPara);
     resCard.fitHeight(0);
     scroll.add(resCard);
@@ -263,7 +337,7 @@ class ResultScene extends Scene {
     // ---- 差异 ----
     y = this.section(scroll, pad, contentW, y, copy.UI.resultDiffTitle);
     const diffCard = new Card({ x: pad, y, w: contentW });
-    const diffPara = new Paragraph({ x: 0, y: 0, w: contentW - 56, text: c.difference, size: FONT.body, lineHeight: 52, color: COLOR.ink });
+    const diffPara = new Paragraph({ x: 0, y: 0, w: contentW - CARD.pad * 2, text: c.difference, size: FONT.body, lineHeight: 52, color: COLOR.ink });
     diffCard.add(diffPara);
     diffCard.fitHeight(0);
     scroll.add(diffCard);
@@ -277,24 +351,34 @@ class ResultScene extends Scene {
       onTap: () => this.stage.router.push('character', { id: anti.char.id })
     });
     scroll.add(antiCard);
-    y += antiCard.h + 20;
+    y += antiCard.h + CARD.gap;
 
     const antiTextCard = new Card({ x: pad, y, w: contentW });
-    const antiPara = new Paragraph({ x: 0, y: 0, w: contentW - 56, text: c.anti, size: FONT.body, lineHeight: 52, color: COLOR.ink });
+    const antiPara = new Paragraph({
+      x: 0, y: 0, w: contentW - CARD.pad * 2, text: c.anti, size: FONT.body, lineHeight: 52, color: TXT.body
+    });
     antiTextCard.add(antiPara);
+    let antiH = antiPara.h;
     const opp = (anti.opposing || [])[0];
     if (opp) {
       const axis = chart.axes.find((a) => a.key === opp.key);
       if (axis) {
-        const line = `${copy.UI.resultAntiTitle} · 「${axis.name}」：你偏${opp.userValue >= 50 ? axis.pos : axis.neg}，TA 偏${opp.targetValue >= 50 ? axis.pos : axis.neg}`;
-        const note = new Paragraph({ x: 0, y: antiPara.h + 20, w: contentW - 56, text: line, size: FONT.tiny, color: COLOR.violetLight, lineHeight: 40 });
-        antiTextCard.add(note);
-        antiTextCard.content.h = antiPara.h + 20 + note.h;
+        // 把"你偏随性 / TA 偏执念"从一行注释改成一张左右对照卡：
+        // 数据本来就在，只是以前没画出来
+        const you = opp.userValue >= 50 ? axis.pos : axis.neg;
+        const ta = opp.targetValue >= 50 ? axis.pos : axis.neg;
+        const versus = new VersusRow({
+          x: 0, y: antiPara.h + 28, w: contentW - CARD.pad * 2,
+          axisName: axis.name, you, ta
+        });
+        antiTextCard.add(versus);
+        antiH = versus.y + versus.h;
       }
     }
+    antiTextCard.content.h = antiH;
     antiTextCard.fitHeight(0);
     scroll.add(antiTextCard);
-    y += antiTextCard.h + 28;
+    y += antiTextCard.h + CARD.gap;
 
     // ---- 一句提点 ----
     const counselPanel = new Panel({
@@ -307,36 +391,16 @@ class ResultScene extends Scene {
     scroll.add(counselPanel);
     scroll.add(counselLabel);
     scroll.add(counselPara);
-    y += counselPanel.h + 28;
+    y += counselPanel.h + CARD.gap;
 
-    // ---- 今日提示 ----
+    // ---- 今日提示（和首页同一个组件，这里是完整密度） ----
     if (r.fortune) {
-      const f = r.fortune;
       y = this.section(scroll, pad, contentW, y, copy.UI.resultTodayTitle);
-      const fc = new Card({ x: pad, y, w: contentW });
-      let ffy = 0;
-      const lines = [
-        { k: copy.UI.todayGood, v: f.good[0] },
-        { k: copy.UI.todayGood, v: f.good[1] },
-        { k: copy.UI.todayBad, v: f.bad[0] },
-        { k: copy.UI.todayBad, v: f.bad[1] }
-      ];
-      fc.add(new Label({ x: 0, y: ffy, w: contentW - 56, text: f.date, size: FONT.small, color: COLOR.ink3 }));
-      fc.add(new Label({ x: 0, y: ffy, w: contentW - 56, text: `${f.starText} ${f.levelName}`, size: FONT.small, color: COLOR.gold, align: 'right' }));
-      ffy += 62;
-      lines.forEach((l) => {
-        fc.add(new KVRow({ x: 0, y: ffy, w: contentW - 56, k: l.k, v: l.v }));
-        ffy += 62;
+      const fc = new TodayCard({
+        x: pad, y, w: contentW, fortune: r.fortune, chart, full: true
       });
-      fc.add(new KVRow({
-        x: 0, y: ffy, w: contentW - 56, k: copy.UI.todayLucky,
-        v: `${f.luckyColor.name} · ${f.luckyNumber} · ${f.luckyItem}`
-      }));
-      ffy += 62;
-      fc.content.h = ffy;
-      fc.fitHeight(0);
       scroll.add(fc);
-      y += fc.h + 28;
+      y += fc.h + CARD.gap;
     }
 
     // ---- 提示 ----
@@ -366,7 +430,8 @@ class ResultScene extends Scene {
     }
 
     // ---- 操作 ----
-    const half = (contentW - 24) / 2;
+    // 主次分明：主按钮整行、两个次级并排、最后一行是"换一条路"的文字按钮
+    const half = (contentW - CARD.gap) / 2;
     scroll.add(new Button({
       x: pad, y, w: contentW, text: copy.UI.resultAgain,
       onTap: () => this.stage.router.reset('home')
@@ -378,8 +443,8 @@ class ResultScene extends Scene {
       onTap: () => this.share()
     }));
     scroll.add(new Button({
-      x: pad + half + 24, y, w: half, variant: 'plain', text: '看一次广告 · 换个角色',
-      onTap: () => this.watchForAnother()
+      x: pad + half + CARD.gap, y, w: half, variant: 'ghost', text: copy.UI.resultSavePic,
+      onTap: () => this.savePic()
     }));
     y += 116;
 
@@ -387,7 +452,14 @@ class ResultScene extends Scene {
       x: pad, y, w: contentW, variant: 'plain', small: true, text: copy.UI.resultCodex,
       onTap: () => this.stage.router.reset('codex')
     }));
-    y += 100;
+    y += 96;
+
+    scroll.add(new Button({
+      x: pad, y, w: contentW, variant: 'text', small: true, size: FONT.small,
+      text: '看一次广告 · 换个角色',
+      onTap: () => this.watchForAnother()
+    }));
+    y += 92;
 
     // ---- 合规 ----
     const isAi = this.outcome && (this.outcome.source === 'ai' || this.outcome.source === 'cache');
@@ -482,6 +554,43 @@ class ResultScene extends Scene {
         } else {
           this.toast(reward.isAvailable() ? '看完广告才能继续' : '暂时没有可用的奖励');
         }
+      });
+  }
+
+  /**
+   * 保存结果海报。
+   *
+   * 只把**本机算出来的**内容画进海报（角色、共振度、最突出的一轴），
+   * 不放 AI 那段解读 —— 放了就得按《人工智能生成合成内容标识办法》在图片上也带标识。
+   * 三种失败各有各的下一步，所以要分开提示：环境不支持 / 用户拒了相册权限 / 导出失败。
+   */
+  savePic() {
+    const main = this.result.match.main;
+    const chart = this.result.chart;
+    analytics.report(analytics.REPORTABLE.SHARE_CLICK, { main: main.char.id, kind: 'poster' });
+    this.toast('正在生成海报…');
+    poster
+      .saveResult({
+        char: main.char,
+        rarityKey: main.char.rarity,
+        stars: (main.rarity && main.rarity.stars) || 0,
+        resonance: main.resonance,
+        axisName: chart && chart.dominant ? chart.dominant.name : '',
+        seed: (() => {
+          const str = String(main.char.id || 'x');
+          let h = 0;
+          for (let i = 0; i < str.length; i += 1) h = (h * 31 + str.charCodeAt(i)) % 100000;
+          return h;
+        })()
+      })
+      .then((r) => {
+        if (r.ok) {
+          this.toast(copy.UI.resultSaveOk);
+          return;
+        }
+        if (r.reason === 'DENIED') this.toast(copy.UI.resultSaveDenied);
+        else if (r.reason === 'UNSUPPORTED') this.toast(copy.UI.resultSaveUnsupported);
+        else this.toast(copy.UI.resultSaveFail);
       });
   }
 
