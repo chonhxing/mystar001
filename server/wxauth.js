@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { CONFIG } = require('./config.js');
+const wxhttp = require('./wxhttp.js');
 
 /**
  * 微信登录 + 无状态会话 token。
@@ -118,20 +119,31 @@ async function code2session(code) {
     `${CONFIG.wechat.loginUrl}?appid=${encodeURIComponent(CONFIG.wechat.appid)}` +
     `&secret=${encodeURIComponent(CONFIG.wechat.secret)}` +
     `&js_code=${encodeURIComponent(code)}&grant_type=authorization_code`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-  const data = await res.json();
+  // ⚠️ 这里不能用内置 fetch：云托管容器访问 api.weixin.qq.com 会走平台内网代理，
+  //    代理出示自签名证书，fetch 会直接失败（DEPTH_ZERO_SELF_SIGNED_CERT），
+  //    表现为"账号一直登录不上"。wxhttp 会先严格校验、只在证书问题上对这个域名降级，
+  //    并把用的是哪一档报给 /api/health。
+  const res = await wxhttp.getJson(url, { timeoutMs: 8000 });
+  if (!res.ok) {
+    return { error: res.error || 'WX_UNREACHABLE', code: res.code, unreachable: true };
+  }
+  const data = res.json;
   if (data && data.openid) {
     return {
       openid: data.openid,
       // unionid 只在"小程序已绑定微信开放平台"时才返回；绑了才能跨应用识别同一用户
       unionid: data.unionid || '',
-      sessionKey: data.session_key
+      sessionKey: data.session_key,
+      via: res.via,
+      cert: res.cert
     };
   }
   return {
     error: (data && data.errmsg) || 'WX_LOGIN_FAILED',
     code: data && data.errcode,
-    blocked: !!(data && data.errcode === 40226)
+    blocked: !!(data && data.errcode === 40226),
+    via: res.via,
+    cert: res.cert
   };
 }
 

@@ -23,6 +23,7 @@ const deepseek = require('./deepseek.js');
 const prompts = require('./prompts.js');
 const validate = require('./validate.js');
 const wxauth = require('./wxauth.js');
+const wxhttp = require('./wxhttp.js');
 const ratelimit = require('./ratelimit.js');
 const pay = require('./pay.js');
 const gameapi = require('./gameapi.js');
@@ -321,30 +322,34 @@ const JOB_MAX = 200;
 let egressCache = { at: 0, data: null };
 async function egressProbe() {
   if (egressCache.data && Date.now() - egressCache.at < 60000) return egressCache.data;
-  const targets = {
-    wechat: 'https://api.weixin.qq.com/',
-    ai: `${String(CONFIG.ai.baseUrl || 'https://api.deepseek.com').replace(/\/+$/, '')}/`
-  };
+  const aiBase = String(CONFIG.ai.baseUrl || 'https://api.deepseek.com').replace(/\/+$/, '');
   const out = {};
-  /* eslint-disable no-await-in-loop */
-  for (const key of Object.keys(targets)) {
+
+  // 微信接口走 wxhttp：它会先严格校验，只在证书问题上对这个域名降级，
+  // 并告诉我们用的是哪一档（strict / insecure）+ 对端证书是谁签的。
+  // 这一档必须报出来 —— 云托管内网代理用自签证书，正是线上"登录不上"的真因。
+  {
+    const t0 = Date.now();
+    const r = await wxhttp.getJson('https://api.weixin.qq.com/', { timeoutMs: 4000 });
+    out.wechat = r.ok
+      ? { ok: true, status: r.status, ms: Date.now() - t0, via: r.via, cert: r.cert || null }
+      : { ok: false, ms: Date.now() - t0, via: r.via, error: r.error, code: r.code,
+        strictCode: r.strictCode || '', target: 'https://api.weixin.qq.com/' };
+  }
+
+  // AI 供应商（DeepSeek）用内置 fetch 就行，链路是直的，没有代理
+  {
     const t0 = Date.now();
     try {
-      const res = await fetch(targets[key], { method: 'GET', signal: AbortSignal.timeout(4000) });
-      // 拿到任何 HTTP 响应都说明"出得去"（401/404 都无所谓）
-      out[key] = { ok: true, status: res.status, ms: Date.now() - t0 };
+      const res = await fetch(`${aiBase}/`, { method: 'GET', signal: AbortSignal.timeout(4000) });
+      out.ai = { ok: true, status: res.status, ms: Date.now() - t0 };
     } catch (e) {
       const cause = (e && e.cause) || {};
-      out[key] = {
-        ok: false,
-        ms: Date.now() - t0,
-        error: (e && e.message) || 'ERR',
-        // ENOTFOUND = DNS 解析不了；ECONNREFUSED/ETIMEDOUT/EHOSTUNREACH = 路由被挡
-        code: cause.code || '',
-        target: targets[key]
-      };
+      out.ai = { ok: false, ms: Date.now() - t0, error: (e && e.message) || 'ERR',
+        code: cause.code || '', target: `${aiBase}/` };
     }
   }
+
   egressCache = { at: Date.now(), data: out };
   return out;
 }

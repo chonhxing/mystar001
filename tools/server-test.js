@@ -575,6 +575,34 @@ function waitFor(url, tries) {
   }
 
   // ------------------------------------------------------------ 抽签模式
+  // ------------------------------------------------------------ 微信接口的 TLS 阶梯
+  const wxhttpMod = require(path.join(__dirname, '..', 'server', 'wxhttp.js'));
+  section('5.95 微信接口走 TLS 阶梯：严格优先，只对这一个域名允许降级');
+  {
+    // 线上真因：云托管容器访问 api.weixin.qq.com 会走平台内网代理，
+    // 代理出示**自签名证书**，Node 内置 fetch 直接失败（DEPTH_ZERO_SELF_SIGNED_CERT），
+    // 表现为"账号一直登录不上"，而容器访问 DeepSeek 却完全正常
+    // —— 很容易误判成"没有公网出口"，我们就是这么绕了一圈。
+    const wxhttp = require(path.join(__dirname, '..', 'server', 'wxhttp.js'));
+
+    const certCases = [
+      'DEPTH_ZERO_SELF_SIGNED_CERT',
+      'SELF_SIGNED_CERT_IN_CHAIN',
+      'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+      'CERT_HAS_EXPIRED'
+    ];
+    const missed = certCases.filter((c) => !wxhttp.isCertError(c, ''));
+    ok(missed.length === 0, `${certCases.length} 种证书错误都能识别出来`, missed.join('、'));
+    ok(!wxhttp.isCertError('ECONNREFUSED', 'connect ECONNREFUSED'),
+      '网络类错误不会被误判成证书问题（那种降级也没用，不该降）');
+    ok(wxhttp.INSECURE_HOSTS.indexOf('api.weixin.qq.com') >= 0,
+      'api.weixin.qq.com 在允许降级的白名单里（否则线上还是登录不上）');
+    ok(wxhttp.INSECURE_HOSTS.indexOf('api.deepseek.com') < 0,
+      'AI 供应商不在白名单里（它的证书是正常的，不该被放宽）');
+    ok(wxhttp.INSECURE_HOSTS.length <= 2,
+      `白名单足够窄（${wxhttp.INSECURE_HOSTS.length} 个域名），不是"一关全关"`);
+  }
+
   section('6. 随心抽签模式');
   {
     const s = { body: { token: await freshToken('draw') } };
@@ -1108,27 +1136,30 @@ function waitFor(url, tries) {
     // 官方错误码：40226 code blocked「高风险等级用户，小程序登录拦截」。
     // 不能当成普通失败让用户重试，要给一句得体的话术，而且不能挡住玩游戏。
     {
-      const realFetch = global.fetch;
+      // ⚠️ 这里要**拦 wxhttp 而不是 global.fetch**：code2session 现在走 wxhttp
+      //    （因为云托管内网代理是自签证书，fetch 必然失败，见 server/wxhttp.js）。
+      //    拦 fetch 的话请求会真的打到微信去，测试环境只能收到 "invalid appid"。
+      const realGetJson = wxhttpMod.getJson;
       const savedAppId = CONFIG.wechat.appid;
       const savedSecret = CONFIG.wechat.secret;
       CONFIG.wechat.appid = 'wxtestappid';
       CONFIG.wechat.secret = 'testsecret';
-      global.fetch = () =>
-        Promise.resolve({
-          json: () => Promise.resolve({ errcode: 40226, errmsg: 'code blocked' })
-        });
+      const stub = (payload) => {
+        wxhttpMod.getJson = () => Promise.resolve({ ok: true, status: 200, via: 'strict', json: payload });
+      };
       try {
+        stub({ errcode: 40226, errmsg: 'code blocked' });
         const r = await post('/api/account/relogin', { code: 'some-code' });
         ok(r.status === 403 && r.body.blocked === true, '40226 返回 403 且标记 blocked');
         ok(/暂时无法/.test(r.body.message || ''), `话术得体，不引导重试："${r.body.message}"`);
 
         // 40029（code 无效）：这个要引导重试
-        global.fetch = () => Promise.resolve({ json: () => Promise.resolve({ errcode: 40029, errmsg: 'invalid code' }) });
+        stub({ errcode: 40029, errmsg: 'invalid code' });
         const r2 = await post('/api/account/relogin', { code: 'stale-code' });
         ok(r2.status === 401 && r2.body.blocked !== true, '40029 不标记 blocked');
         ok(/重试/.test(r2.body.message || ''), `40029 引导重试："${r2.body.message}"`);
       } finally {
-        global.fetch = realFetch;
+        wxhttpMod.getJson = realGetJson;
         CONFIG.wechat.appid = savedAppId;
         CONFIG.wechat.secret = savedSecret;
       }
