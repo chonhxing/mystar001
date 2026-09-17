@@ -432,6 +432,33 @@ function waitFor(url, tries) {
 
     ok(wxauth.secretSource() === 'generated', '本测试没配 AUTH_SECRET → 明确标记为"临时随机密钥"');
 
+    // "这个密钥能不能用"的判断本身也要测：第一版只做精确字符串比对，
+    // 结果 .env 里那个 36 位的占位符**变体**（dev-only-...）被认为是真密钥，
+    // 被原样抄进了部署表 —— 等于把签名密钥公开出去。
+    const weakCases = [
+      ['空串', '', true],
+      ['短串', 'abc123', true],
+      ['精确占位符', 'change-me-to-a-long-random-string', true],
+      ['占位符变体（就是踩过的那个）', 'dev-only-change-me-to-a-long-random-xx', true],
+      ['出现 placeholder 字样', 'placeholder-key-1234567890abcdefghijk', true],
+      ['低熵重复', 'secretsecretsecretsecretsecretsecret', true],
+      ['真随机 hex', crypto.randomBytes(32).toString('hex'), false],
+      ['真随机 base64', crypto.randomBytes(32).toString('base64'), false]
+    ];
+    const wrong = weakCases.filter(([, val, want]) => wxauth.isWeakSecret(val) !== want)
+      .map(([name]) => name);
+    ok(wrong.length === 0,
+      `${weakCases.length} 种密钥形态的判断都对（占位符/低熵一律不认）`,
+      wrong.length ? `判错的：${wrong.join('、')}` : '');
+    ok(wxauth.isWeakSecret(authSecretInEnvExample()) === true,
+      'server/.env.example 里那个模板值本身就被判定为"必须换掉"');
+    function authSecretInEnvExample() {
+      const m = /^AUTH_SECRET=(.*)$/m.exec(
+        require('fs').readFileSync(path.join(__dirname, '..', 'server', '.env.example'), 'utf8')
+      );
+      return m ? m[1] : '';
+    }
+
     const b64urlS = (s) => Buffer.from(s).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     const forge = (openid, key) => {
       const payload = `${b64urlS(openid)}.${Date.now() + 86400000}`;

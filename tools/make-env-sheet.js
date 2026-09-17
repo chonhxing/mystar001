@@ -69,9 +69,15 @@ const pick = (key, fallback) => {
 // AUTH_SECRET：会话 token 的签名密钥。
 // ⚠️ 没配的话服务端会临时随机一个（不会崩），代价是每次重启所有人都要重新登录，
 //    所以这里**自动生成一个够长的**并写进表里 —— 只生成一次，之后复用（存在 .env.cloud）。
+//
+// ⚠️ 判断"配没配"必须和服务端用**同一个函数**：只看长度的话，
+//    server/.env 里那个 36 位的占位符变体（`dev-only-...`）会被当成"配好了"
+//    照抄进部署表 —— 那等于把签名密钥公开出去。第一版就是栽在这儿。
+const { isWeakSecret } = require(path.join(ROOT, 'server', 'wxauth.js'));
+
 let authSecret = pick('AUTH_SECRET');
 let authSecretFresh = false;
-if (!authSecret || authSecret.length < 32) {
+if (isWeakSecret(authSecret)) {
   authSecret = crypto.randomBytes(32).toString('hex');
   authSecretFresh = true;
   const file = CLOUD_ENV_FILE;

@@ -31,11 +31,32 @@ function b64url(buf) {
  *     权益会在下次 syncFromServer 时恢复）—— 这远好过一个能被冒充的公开密钥。
  */
 const UNSAFE_SECRETS = ['', 'dev-only-change-me', 'change-me-to-a-long-random-string'];
+
+/**
+ * 这个密钥能不能用（不能用 = 抛掉它，改用临时随机）。
+ *
+ * ⚠️ 只做"精确字符串比对"是不够的 —— 第一版就栽在这儿：
+ *    实际躺在 .env 里的占位符是 `dev-only-change-me-to-a-long-random-...`
+ *    这种**变体**，长度 36、看着像真密钥，精确比对全都不命中，
+ *    于是被原样抄进了部署表，等于把签名密钥公开出去。
+ *    所以这里改成"形态判断"：明显是占位符的、或熵太低的，一律不认。
+ */
+const PLACEHOLDER_HINTS = ['change-me', 'changeme', 'dev-only', 'placeholder', 'example', 'todo', 'xxxx', 'your-secret', 'test-secret'];
+function isWeakSecret(v) {
+  const s = String(v || '');
+  if (s.length < 32) return true;
+  if (UNSAFE_SECRETS.indexOf(s) >= 0) return true;
+  const low = s.toLowerCase();
+  if (PLACEHOLDER_HINTS.some((h) => low.indexOf(h) >= 0)) return true;
+  // 熵太低：真正的随机串（hex/base64）字符种类很多；"aaaa...""secretsecret..." 这种不像
+  if (new Set(s).size < 8) return true;
+  return false;
+}
+
 let ephemeralSecret = null;
 
 function usingEnvSecret() {
-  const v = String(CONFIG.auth.secret || '');
-  return UNSAFE_SECRETS.indexOf(v) < 0 && v.length >= 16;
+  return !isWeakSecret(CONFIG.auth.secret);
 }
 
 function secret() {
@@ -45,7 +66,7 @@ function secret() {
     console.warn('[auth] ⚠️ 没有配置 AUTH_SECRET（或还是占位符/太短）→ 本次启动用一个随机密钥。');
     console.warn('[auth]    影响：重启或换副本后所有会话失效，用户需要重新登录（权益会在下次同步时恢复）。');
     console.warn('[auth]    修复：云托管「服务设置 → 环境变量」里配一个长随机串；');
-    console.warn('[auth]         `node tools/make-env-sheet.js` 会自动生成一个并写进粘贴表。');
+    console.warn('[auth]        `node tools/make-env-sheet.js` 会自动生成一个并写进粘贴表。');
   }
   return ephemeralSecret;
 }
@@ -201,4 +222,8 @@ function resolveOwner(req, token) {
   return { owner: null, expired: true, anonymous: false };
 }
 
-module.exports = { login, issueToken, verifyToken, ownerOf, resolveOwner, isDevMode, secretSource };
+module.exports = {
+  login, issueToken, verifyToken, ownerOf, resolveOwner, isDevMode, secretSource,
+  // 生成部署配置的工具要用同一份判断，别在两处各写一遍（第一版就是这么错的）
+  isWeakSecret, UNSAFE_SECRETS
+};
