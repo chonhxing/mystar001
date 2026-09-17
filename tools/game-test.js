@@ -597,6 +597,9 @@ let stageRef = null;
 
   // ------------------------------------------------------------ 启动
   section('1. 启动与屏幕适配');
+  // 测试环境默认"已同意协议"，避免首启协议弹窗挡住后续所有点击。
+  // 协议闸门本身的行为在 §1.5 单独验（那里会清掉这个值再启动）。
+  storageMap.set('agreement_v1', '1');
   boot.start();
   const stage = boot.getStage();
   liveStage = stage;
@@ -684,6 +687,153 @@ let stageRef = null;
   const homeOps = stage.canvas._ops.length;
   ok(homeOps > 100, `启动场景渲染出 ${homeOps} 条绘制指令`);
   ok(countText(stage.canvas._ops) > 8, '启动场景画出了文字');
+
+  // ------------------------------------------------------------ 协议与隐私
+  section('1.5 协议闸门与隐私授权（提审要件）');
+  {
+    const agreement = require(path.join(ROOT, 'services/agreement.js'));
+    const agreementUi = require(path.join(ROOT, 'src/js/ui/agreement.js'));
+    const privacy = require(path.join(ROOT, 'services/privacy.js'));
+
+    // ① 未同意 → 进账号页会弹协议窗，点"同意并继续"前不给放行
+    storageMap.delete('agreement_v1');
+    router.reset('account');
+    step(1);
+    let acct = router.current();
+    let sheet = find(acct.overlay, (w) => w.constructor.name === 'AgreementSheet');
+    ok(!!sheet, '未同意协议时进账号页 → 弹出协议窗');
+    if (sheet) {
+      ok(sheet.mode === 'gate', '弹的是"必须同意"的闸门模式');
+      // 没勾选就点"同意并继续" → 不响应（按钮是暗的）
+      tap(sheet.cardX + sheet.cardW * 0.75, sheet.cardY + sheet.cardH - 68);
+      step(1);
+      ok(find(acct.overlay, (w) => w.constructor.name === 'AgreementSheet') !== null,
+        '没勾选就点同意 → 弹窗还在（不响应）');
+      ok(agreement.hasAgreed() === false, '没勾选 → 同意状态没被写入');
+      // 勾选 + 同意 → 写入状态、弹窗关闭
+      tap(sheet.cardX + 32 + 17, sheet.cardY + sheet.cardH - 104);
+      step(1);
+      tap(sheet.cardX + sheet.cardW * 0.75, sheet.cardY + sheet.cardH - 68);
+      step(1);
+      ok(agreement.hasAgreed() === true, '勾选并同意 → 状态已持久化（agreement_v1=1）');
+      ok(storageMap.get('agreement_v1') === '1', '同意状态落进了本地存储');
+      ok(find(acct.overlay, (w) => w.constructor.name === 'AgreementSheet') === null,
+        '同意后弹窗关闭');
+    }
+
+    // ② 已同意 → 进账号页不再弹
+    router.reset('home');
+    router.reset('account');
+    step(1);
+    acct = router.current();
+    ok(!find(acct.overlay, (w) => w.constructor.name === 'AgreementSheet'),
+      '已同意后进账号页不再弹协议窗');
+
+    // ③ 隐私授权：平台触发 onNeedPrivacyAuthorization → 我们的弹窗 → resolve 必须挂用户点击
+    let resolveFn = null;
+    const origOnNeed = global.wx.onNeedPrivacyAuthorization;
+    global.wx.onNeedPrivacyAuthorization = (fn) => { resolveFn = fn; };
+    privacy._reset();
+    privacy.setup();
+    // _reset 会清掉 boot 注册的展示器，这里按 boot 的口径重新挂一遍
+    privacy.registerPresenter(() => {
+      const sc = router.current();
+      if (!sc || !sc.overlay) return;
+      const sh = new agreementUi.PrivacySheet({ w: stage.width, h: stage.height });
+      sh.onDone = () => sc.overlay.clearChild(sh);
+      sc.overlay.add(sh);
+    });
+    ok(typeof resolveFn === 'function', '注册了 onNeedPrivacyAuthorization（自定义隐私弹窗模式）');
+    let resolved = null;
+    resolveFn((arg) => { resolved = arg; });
+    ok(privacy.hasPending() === true, '平台要求授权 → 我们这边记下待结算的 resolve');
+    ok(!!find(acct.overlay, (w) => w.constructor.name === 'PrivacySheet'),
+      '并弹出我们自己的隐私授权窗（界面统一）');
+    const pSheet = find(acct.overlay, (w) => w.constructor.name === 'PrivacySheet');
+    if (pSheet) {
+      tap(pSheet.cardX + pSheet.cardW * 0.25, pSheet.cardY + pSheet.cardH - 68);
+      ok(resolved && resolved.event === 'disagree', `点拒绝 → resolve({event:'disagree'})（实际 ${resolved && resolved.event}）`);
+      // 再来一次，点「同意」
+      resolved = null;
+      resolveFn((arg) => { resolved = arg; });
+      step(1);
+      const p2 = find(acct.overlay, (w) => w.constructor.name === 'PrivacySheet');
+      tap(p2.cardX + p2.cardW * 0.75, p2.cardY + p2.cardH - 68);
+      ok(resolved && resolved.event === 'agree', `点同意 → resolve({event:'agree'})（实际 ${resolved && resolved.event}）`);
+      ok(privacy.hasPending() === false, '结算完 pending 清空');
+    }
+    global.wx.onNeedPrivacyAuthorization = origOnNeed;
+    privacy._reset();
+
+    // ④ 设置页回看入口
+    router.reset('profile');
+    step(1);
+    const profScene = router.current();
+    const agreeRow = find(profScene.root, (w) => w.title === copy.UI.profileAgreement);
+    ok(!!agreeRow, '设置页有「用户协议与隐私政策」入口（应用内可随时访问协议全文）');
+    if (agreeRow) {
+      tapWidget(agreeRow);
+      step(1);
+      const readSheet = find(profScene.overlay, (w) => w.constructor.name === 'AgreementSheet');
+      ok(!!readSheet && readSheet.mode === 'read', '点入口 → 只读模式打开全文');
+      if (readSheet) {
+        // 两份全文都比普通屏幕的视口长。用一个小屏尺寸的实例直接验滚动机制
+        const small = new agreementUi.AgreementSheet({ w: 750, h: 960, mode: 'read' });
+        ok(small.maxScroll() > 0, `协议全文超出视口（可滚动 ${small.maxScroll()}px）`);
+        const beforeScroll = small.scrollY;
+        small.onDragStart(0, 0);
+        // 手指上滑（dy 为负）→ 内容上移、scrollY 增大（和 ScrollView 同一口径）
+        small.onDrag(0, 0, { dy: -300 });
+        ok(small.scrollY > beforeScroll, '协议全文可以滚动阅读');
+        small.onDrag(0, 0, { dy: -99999 });
+        ok(small.scrollY === small.maxScroll(), '滚动有下限保护（不会滚过头）');
+      }
+    }
+
+    // ⑤ 震动反馈开关：默认开；关掉后 tap 不再触发 vibrateShort
+    const haptics = require(path.join(ROOT, 'services/haptics.js'));
+    const storageMod = require(path.join(ROOT, 'utils/storage.js'));
+    let vibCalls = 0;
+    const origVib = global.wx.vibrateShort;
+    global.wx.vibrateShort = () => { vibCalls += 1; };
+    storageMod.setSettings({ vibration: true });
+    haptics.tap();
+    ok(vibCalls === 1, '震动默认开启：tap 触发一次 vibrateShort');
+    storageMod.setSettings({ vibration: false });
+    haptics.tap();
+    ok(vibCalls === 1, '设置里关掉震动后：tap 不再触发（尊重用户开关）');
+    global.wx.vibrateShort = origVib;
+    storageMod.setSettings({ vibration: true });
+
+    // ⑥ banner 广告：未配置时静默（不报错、不创建实例）；配置后才挂
+    const reward = require(path.join(ROOT, 'services/reward.js'));
+    let bannerCreated = 0;
+    const origBanner = global.wx.createBannerAd;
+    global.wx.createBannerAd = (o) => {
+      bannerCreated += 1;
+      return { onResize() {}, onError() {}, show: () => Promise.resolve(), hide() {}, destroy() {} };
+    };
+    reward.mountBanner('home', stage);
+    ok(bannerCreated === 0, 'banner 广告位没配 id 时：静默跳过，不创建实例');
+    // 临时配一个 id 再挂（借 CONFIG 直接改，测完还原）
+    const savedUnit = CONFIG.ADS.UNITS.banner_home;
+    const savedEnabled = CONFIG.ADS.BANNER.ENABLED;
+    CONFIG.ADS.UNITS.banner_home = 'adunit-banner-test';
+    CONFIG.ADS.BANNER.ENABLED = true;
+    reward.mountBanner('home', stage);
+    ok(bannerCreated === 1, '配了广告位 id 且开关打开 → 创建并展示 banner');
+    reward.hideBanner();
+    ok(bannerCreated === 1, '离开首页会 hide（不销毁实例，回来直接 show）');
+    reward.mountBanner('result', stage);
+    ok(bannerCreated === 1, '非白名单场景（result）不会重复创建 banner');
+    reward.destroyBanner();
+    CONFIG.ADS.UNITS.banner_home = savedUnit;
+    CONFIG.ADS.BANNER.ENABLED = savedEnabled;
+    global.wx.createBannerAd = origBanner;
+
+    router.reset('home');
+    step(1);
+  }
 
   // ------------------------------------------------------------ 图形自检场景
   section('2. 首页：表单与交互');
@@ -1165,6 +1315,9 @@ let stageRef = null;
   section('9. AI 不可用时的降级');
   aiMode = 'fail';
   storageMap.clear();
+  // 协议闸门的行为已在 §1.5 单独验；这里清掉存储后要把"已同意"补回来，
+  // 否则后面进账号页会弹协议窗挡住导航点击
+  storageMap.set('agreement_v1', '1');
   storageMap.set('profile', JSON.stringify({
     name: '离线', birthDate: '1990-02-02', timeKnown: false, city: '北京'
   }));

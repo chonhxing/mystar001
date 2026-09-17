@@ -116,4 +116,105 @@ function unlockByAd() {
   return Promise.resolve({ ok: true, granted: true, reason: 'AD_NOT_OPEN_GRANTED' });
 }
 
-module.exports = { showRewarded, isAvailable, unlockByAd, unitOf };
+// ============================================================ banner 广告
+
+/**
+ * banner 广告（常驻曝光位）。
+ *
+ * 和激励视频的区别：激励是"用户主动换奖励"，banner 是"页面常驻曝光"，
+ * 两者不冲突。小游戏的 banner 是**原生控件**，浮在 canvas 之上：
+ *  - 位置用 CSS 像素（设计稿坐标 × device.scale）
+ *  - 不随页面滚动，所以只挂在固定不动的页面（首页底部导航上方）
+ *  - 离开页面必须 hide，否则会盖在别的场景上
+ *
+ * 设计约束：广告**永远不能盖住可点内容**（平台红线），
+ * 所以它的位置始终贴着底部导航上沿，不遮任何按钮。
+ */
+
+let bannerAd = null;
+let bannerUnitId = '';
+
+/** 换算：设计稿 y（750 宽）→ CSS 像素 */
+function toCss(stage, designY) {
+  if (!stage || !stage.dev) return 0;
+  return Math.round((designY * stage.dev.cssWidth) / stage.width);
+}
+
+function bannerUnit() {
+  return unitOf('banner_home');
+}
+
+/**
+ * 按场景挂/摘 banner。
+ * @param {string} sceneName 场景名（CONFIG.ADS.BANNER.SCENES 里配置的才展示）
+ * @param {object} stage 舞台（拿屏幕尺寸）
+ */
+function mountBanner(sceneName, stage) {
+  const cfg = CONFIG.ADS && CONFIG.ADS.BANNER;
+  const unit = bannerUnit();
+  const allowed = cfg && cfg.ENABLED && unit &&
+    (cfg.SCENES || []).indexOf(sceneName) >= 0;
+
+  if (!allowed) {
+    hideBanner();
+    return;
+  }
+  if (typeof wx === 'undefined' || typeof wx.createBannerAd !== 'function') return;
+  if (bannerAd && bannerUnitId === unit) {
+    bannerAd.show().catch(() => {});
+    return;
+  }
+
+  try {
+    bannerUnitId = unit;
+    // 初始位置：底部导航上沿（导航高 108 设计稿 px）+ 再往上让出一点间隙
+    const designY = stage.height - 108 - 8;
+    bannerAd = wx.createBannerAd({
+      adUnitId: unit,
+      style: {
+        left: 0,
+        top: toCss(stage, designY),
+        width: Math.round(stage.dev.cssWidth)
+      }
+    });
+    bannerAd.onResize((size) => {
+      // 拿到真实高度后再摆一次，确保底边正好贴着导航上沿
+      const h = (size && size.height) || 60;
+      const top = Math.max(0, stage.dev.cssHeight - toCss(stage, 108) - h - toCss(stage, 8));
+      try {
+        bannerAd.style.top = top;
+        bannerAd.style.left = 0;
+      } catch (e) { /* 老基础库不支持改 style，用初始位置 */ }
+    });
+    bannerAd.onError((err) => {
+      // 没开通流量主 / 未配置时平台会报 1002 之类：静默销毁，别让游戏坏掉
+      analytics.report(analytics.REPORTABLE.AD_FAILED, { slot: 'banner', code: (err && err.errCode) || 0 });
+      bannerAd = null;
+      bannerUnitId = '';
+    });
+    bannerAd.show().catch(() => {});
+  } catch (e) {
+    bannerAd = null;
+    bannerUnitId = '';
+  }
+}
+
+function hideBanner() {
+  if (bannerAd) {
+    try {
+      bannerAd.hide();
+    } catch (e) { /* 已销毁等场景，忽略 */ }
+  }
+}
+
+function destroyBanner() {
+  if (bannerAd) {
+    try {
+      bannerAd.destroy();
+    } catch (e) { /* 忽略 */ }
+    bannerAd = null;
+    bannerUnitId = '';
+  }
+}
+
+module.exports = { showRewarded, isAvailable, unlockByAd, unitOf, mountBanner, hideBanner, destroyBanner };

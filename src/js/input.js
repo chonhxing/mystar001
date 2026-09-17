@@ -19,6 +19,9 @@ const LONG_PRESS_MS = 520;
  */
 let traceFn = null;
 
+// 震动反馈：所有 tap 统一走这里，尊重"我的 → 设置 → 震动反馈"开关
+const haptics = require('../../services/haptics.js');
+
 function trace(...parts) {
   if (!traceFn) return;
   try {
@@ -141,6 +144,7 @@ function create(stage) {
       fire(capturedBy, 'onDragEnd', p.x, p.y);
       capturedBy = null;
     } else if (target && !moved && !longPressFired && dt < TAP_MAX_MS) {
+      haptics.tap();
       fire(target, 'onTap', p.x, p.y);
     }
     target = null;

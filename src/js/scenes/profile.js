@@ -13,6 +13,8 @@ const core = require('../../../core/index.js');
 const storage = require('../../../utils/storage.js');
 const fmt = require('../../../utils/format.js');
 const api = require('../../../services/api.js');
+const agreementUi = require('../ui/agreement.js');
+const agreement = require('../../../services/agreement.js');
 
 /** 可点的设置行 */
 class SettingRow extends Widget {
@@ -290,6 +292,22 @@ class ProfileScene extends Scene {
     setCard.add(new HLine({ x: 0, y: sy + 117, w: contentW - 56 }));
     sy += 118;
 
+    // 震动反馈：全局统一在 input.js 的 tap 分发里调，这里只管开关
+    const vibRow = new SettingRow({
+      x: 0, y: sy, w: contentW - 56, title: copy.UI.profileVibration, 
+      switchOn: this.settings.vibration !== false,
+      onTap: (self) => {
+        const on = this.settings.vibration === false;
+        storage.setSettings({ vibration: on });
+        this.settings.vibration = on;
+        self.switchOn = on;
+        self.dirty();
+      }
+    });
+    setCard.add(vibRow);
+    setCard.add(new HLine({ x: 0, y: sy + 117, w: contentW - 56 }));
+    sy += 118;
+
     const backendRow = new SettingRow({
       x: 0, y: sy, w: contentW - 56, title: copy.UI.profileBackend,
       // 这一行保留说明：它是**诊断信息**，不是产品文案 ——
@@ -334,6 +352,13 @@ class ProfileScene extends Scene {
     aboutCard.add(new SettingRow({
       x: 0, y: ay, w: contentW - 56, title: copy.UI.profileAbout, 
       onTap: () => this.showAbout()
+    }));
+    ay += 118;
+    // 提审要求：应用内必须能随时访问协议全文（首启弹窗之外的第二入口）
+    aboutCard.add(new HLine({ x: 0, y: ay - 1, w: contentW - 56 }));
+    aboutCard.add(new SettingRow({
+      x: 0, y: ay, w: contentW - 56, title: copy.UI.profileAgreement,
+      onTap: () => this.showAgreement()
     }));
     ay += 118;
     aboutCard.add(new HLine({ x: 0, y: ay - 1, w: contentW - 56 }));
@@ -426,6 +451,8 @@ class ProfileScene extends Scene {
     this.confirm({ title: '清空全部数据', body: '出生资料、记录、图鉴会一起删除，这一步不能撤销。' }).then((yes) => {
       if (!yes) return;
       storage.clearAll();
+      // 协议同意状态也一起重置：下次启动会重新弹协议，口径与"清空全部"一致
+      agreement.reset();
       this.reload();
       this.build();
       this.toast('已清空');
@@ -439,6 +466,17 @@ class ProfileScene extends Scene {
       confirmText: '知道了',
       cancelText: '关闭'
     }).then(() => {});
+  }
+
+  /** 回看用户协议与隐私政策全文（提审要求的"应用内可随时访问"入口） */
+  showAgreement() {
+    const sheet = new agreementUi.AgreementSheet({
+      w: this.stage.width,
+      h: this.stage.height,
+      mode: 'read'
+    });
+    sheet.onClose = () => this.overlay.clearChild(sheet);
+    this.overlay.add(sheet);
   }
 }
 

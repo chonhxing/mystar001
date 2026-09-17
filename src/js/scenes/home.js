@@ -12,6 +12,7 @@ const { CHARACTERS } = require('../../../data/characters.js');
 const core = require('../../../core/index.js');
 const storage = require('../../../utils/storage.js');
 const fmt = require('../../../utils/format.js');
+const reward = require('../../../services/reward.js');
 const divination = require('../../../services/divination.js');
 const entitlement = require('../../../services/entitlement.js');
 const gate = require('../../../services/gate.js');
@@ -281,12 +282,23 @@ class HomeScene extends Scene {
     this.alwaysRender = true; // 星空背景一直在动
     this.loadSaved();
     this.build();
+    // banner 广告：首页常驻曝光位（原生控件，贴底部导航上沿，永不遮可点内容）
+    reward.mountBanner('home', this.stage);
   }
 
   /** 从别的场景回来（比如结果页）：额度可能变了，重建界面刷新那行状态 */
   onResume() {
     this.loadSaved();
     this.build();
+    reward.mountBanner('home', this.stage);
+  }
+
+  onPause() {
+    reward.hideBanner();
+  }
+
+  onExit() {
+    reward.hideBanner();
   }
 
   loadSaved() {

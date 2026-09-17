@@ -20,6 +20,8 @@ const KEYS = {
   token: 'token',
   devId: 'devId',
   dataVersion: 'dataVersion',
+  // 用户协议/隐私政策的同意状态（首次启动弹窗，同意后不再弹）
+  agreement: 'agreement_v1',
   // 微信昵称头像。属于**账号层**（不是生辰资料），所以和 profile 分开存；
   // 只存本机，不上传（原因见 services/wechatprofile.js 的说明）
   wechatProfile: 'wechatProfile'
@@ -429,6 +431,9 @@ function clearAll() {
 module.exports = {
   KEYS,
   MAX_PROFILES,
+  // 底层通用读写（协议同意状态这类简单键值用它们）
+  get,
+  set,
   getProfiles,
   setProfiles,
   addProfile,

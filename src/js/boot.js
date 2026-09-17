@@ -10,6 +10,8 @@ const analytics = require('../../services/analytics.js');
 const update = require('../../services/update.js');
 const api = require('../../services/api.js');
 const share = require('../../services/share.js');
+const privacy = require('../../services/privacy.js');
+const agreementUi = require('./ui/agreement.js');
 
 /**
  * 启动流程。
@@ -40,6 +42,21 @@ function start() {
 
   router = new Router(stage);
   stage.router = router;
+
+  /**
+   * 隐私授权监听必须**尽早**注册（官方规则：注册了 onNeedPrivacyAuthorization
+   * 才进入"自定义隐私弹窗"模式，否则平台弹它自己的统一弹窗，界面割裂）。
+   * 必须在任何隐私接口被调用之前 —— 账号页的头像按钮就是隐私接口。
+   */
+  privacy.setup();
+  privacy.registerPresenter(() => {
+    if (!router) return;
+    const scene = router.current();
+    if (!scene || !scene.overlay) return;
+    const sheet = new agreementUi.PrivacySheet({ w: stage.width, h: stage.height });
+    sheet.onDone = () => scene.overlay.clearChild(sheet);
+    scene.overlay.add(sheet);
+  });
 
   router.register({
     home: require('./scenes/home.js'),
@@ -78,6 +95,15 @@ function start() {
   stage.start();
   healDeviceInfo();
   restoreEntitlement();
+
+  /**
+   * 用户协议 / 隐私政策闸门（提审要件）：
+   * 没同意过就挡在首屏前，同意状态写进本地存储，之后不再弹。
+   * 放在主循环启动之后：弹窗盖在首屏上，用户看到的是完整页面而不是黑屏。
+   */
+  agreementUi.ensureAgreed(stage, () => {
+    analytics.info('agreement', 'accepted');
+  });
 
   const bootMs = Date.now() - bootAt;
   // 启动耗时关系到留存：官方数据是"4 秒内看到首屏可以减少约 30~40% 流失"。

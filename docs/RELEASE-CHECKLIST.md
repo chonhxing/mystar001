@@ -87,8 +87,18 @@
 
 | 选择 | 要做的事 |
 | --- | --- |
-| 做广告变现 | MP 后台开通流量主（需满足平台的流量主要求）→ 创建激励视频广告位 → 把 ID 填进 `config.ADS.UNITS.divinate_again` → 打开 `config.ADS.ENABLED` |
+| 做广告变现 | MP 后台开通流量主（**个人主体可以开**：小游戏累计独立访客 UV 达标即可，后台「流量主」页面会显示实时门槛，此前官方口径是 1000 UV、近期后台已降到 500）→ 创建激励视频广告位 → 把 ID 填进 `config.ADS.UNITS.divinate_again` → 打开 `config.ADS.ENABLED` |
 | 暂不做广告 | 把 `config.ADS.GRANT_WHEN_UNAVAILABLE` 改成 `false`（**一个开关**：没广告就明确提示"广告位暂未开放"，不发放奖励），同时把简介里的变现描述去掉 |
+
+**广告位配齐后的完整开法**（2026-09 接入，`services/reward.js`）：
+
+| 广告位 | 配置键 | 说明 |
+| --- | --- | --- |
+| 激励视频（解锁次数） | `config.ADS.UNITS.divinate_again` + `ADS.ENABLED` | 用户主动看广告换 1 次匹配，`isEnded` 才发奖励（平台硬规则） |
+| **banner（首页常驻曝光）** | `config.ADS.UNITS.banner_home` + `ADS.BANNER.ENABLED` | 新增。贴首页底部导航上沿，随页面进出自动显隐，**永不遮可点内容**；没配/未开通流量主时静默跳过 |
+
+⚠️ 只有 `UNITS` 里填了 id 且 `ENABLED=true` 时才是真的广告变现；没配时"看广告解锁"等于白送，
+**这时候提交材料里就不要写广告变现**（见 `config.ADS` 的注释）。
 
 ⚠️ 以前解锁面板和充值页各写了一份"没配就白送"，改一处会漏另一处；
 现在收敛进 `services/reward.js` 的 `unlockByAd()`，上面的开关对两处同时生效。

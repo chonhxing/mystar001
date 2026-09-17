@@ -13,6 +13,8 @@ const playlog = require('../../../services/playlog.js');
 const gate = require('../../../services/gate.js');
 const divination = require('../../../services/divination.js');
 const wechatprofile = require('../../../services/wechatprofile.js');
+const agreement = require('../../../services/agreement.js');
+const agreementUi = require('../ui/agreement.js');
 const assets = require('../assets.js');
 const storage = require('../../../utils/storage.js');
 const { CHARACTERS } = require('../../../data/characters.js');
@@ -703,6 +705,11 @@ class AccountScene extends Scene {
    */
   requestPrivacy() {
     if (!CONFIG.ACCOUNT.ENABLE_WECHAT_PROFILE || this.privacyReady) return;
+    // 头像昵称属隐私信息：先过协议闸门，再走平台隐私授权
+    if (!agreement.hasAgreed()) {
+      agreementUi.ensureAgreed(this.stage, () => this.requestPrivacy());
+      return;
+    }
     wechatprofile.ensurePrivacy().then((ok) => {
       if (!this.isActive()) return;
       this.privacyReady = !!ok;
@@ -828,6 +835,11 @@ class AccountScene extends Scene {
 
   doRelogin() {
     if (this.busy) return;
+    // 合规：登录前必须过用户协议/隐私政策闸门（覆盖"首启弹窗被跳过"的边角情况）
+    if (!agreement.hasAgreed()) {
+      agreementUi.ensureAgreed(this.stage, () => this.doRelogin());
+      return;
+    }
     this.busy = copy.UI.accountRelogining;
     this.build();
     account.relogin().then((r) => {
