@@ -208,7 +208,10 @@ function waitFor(url, tries) {
       `health 报告登录模式（devMode=${h.body.login && h.body.login.devMode}）`);
     ok(h.body.login.devMode === true, '本测试没配 WX_SECRET → 明确标记为按设备认人');
     ok(String(h.body.login.hint).indexOf('WX_SECRET') >= 0, '并给出"该配哪个变量"的提示');
-    ok(!/secret/i.test(h.raw.replace(/WX_SECRET/g, '')), '提示里没有真的 secret 值');
+    // 提示里出现"该配 WX_SECRET / AUTH_SECRET"是**故意的**，所以这里只查值：
+    // 不能出现测试用的 key，也不能出现任何密钥样的长串（字段名不必管）
+    ok(!/test-key-must-not-leak/.test(h.raw), '提示里没有真的密钥值');
+    ok(!/[0-9a-f]{32,}/i.test(h.raw), 'health 里没有密钥样的长串');
 
     const r = await get('/api/roster');
     ok(r.status === 200 && r.body.characters.length === 60, 'GET /api/roster 下发角色库');
@@ -418,7 +421,42 @@ function waitFor(url, tries) {
       fsMod.rmdirSync(fresh);
     } catch (e) { /* 收尾失败不影响结论 */ }
   }
-  section('5.7 AI 总预算（重试不能越过它，也不能超过客户端愿意等的时间）');
+  // ------------------------------------------------------------ 会话密钥
+  section('5.7 会话密钥：没配 AUTH_SECRET 时，公开的默认值不能用来冒充用户');
+  {
+    // token 就是 `openid.exp.签名`。签名密钥要是仓库里写死的默认值（公开可读），
+    // 任何人手算一个 HMAC 就能签发任意 openid 的 token —— 读别人的账号、改别人的权益。
+    // 所以没配时必须用**本次进程随机**的密钥，让用旧默认值签的 token 全部失效。
+    const crypto = require('crypto');
+    const wxauth = require(path.join(__dirname, '..', 'server', 'wxauth.js'));
+
+    ok(wxauth.secretSource() === 'generated', '本测试没配 AUTH_SECRET → 明确标记为"临时随机密钥"');
+
+    const b64urlS = (s) => Buffer.from(s).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const forge = (openid, key) => {
+      const payload = `${b64urlS(openid)}.${Date.now() + 86400000}`;
+      const sig = b64urlS(crypto.createHmac('sha256', key).update(payload).digest()).slice(0, 43);
+      return `${payload}.${sig}`;
+    };
+
+    ['dev-only-change-me', 'change-me-to-a-long-random-string', '', 'short'].forEach((bad) => {
+      ok(wxauth.verifyToken(forge('o_victim', bad)) === null,
+        `用「${bad || '(空)'}」这种公开/占位密钥伪造的 token 被拒绝`);
+    });
+
+    // 真 token 必须还有效（别修成"谁都不认"）
+    const real = wxauth.issueToken('o_self');
+    ok(wxauth.verifyToken(real) === 'o_self', '正常签发的 token 仍然有效');
+
+    // 健康检查要把"用的是临时密钥"报出来，否则只有等重启后用户被登出才发现
+    const h2 = await get('/api/health');
+    ok(h2.body.auth && h2.body.auth.secretSource === 'generated',
+      `health 报告会话密钥来源（${h2.body.auth && h2.body.auth.secretSource}）`);
+    ok(String(h2.body.auth.hint).indexOf('AUTH_SECRET') >= 0, '并提示该配哪个变量');
+    ok(h2.raw.indexOf(real.slice(-20)) < 0, 'health 不泄露 token 的签名');
+  }
+
+  section('5.8 AI 总预算（重试不能越过它，也不能超过客户端愿意等的时间）');
   {
     // 直接给 chat() 塞一个假 fetch：不碰真网络，能把"调了几次、等了多久"量出来
     const deepseek = require(path.join(__dirname, '..', 'server', 'deepseek.js'));

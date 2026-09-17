@@ -16,8 +16,47 @@ function b64url(buf) {
   return Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+/**
+ * 会话签名密钥。
+ *
+ * ⚠️ 这里**不能**用一个写死在仓库里的默认值。token 就是 `openid.exp.签名`，
+ * 密钥一旦是公开的（比如默认值 `dev-only-change-me` —— 这个仓库是可读的），
+ * 任何人手算一个 HMAC 就能签发任意 openid 的 token，等于**冒充任意用户**：
+ * 读别人的账号、改别人的权益、花别人的配额。这不是"弱密码"，是没有鉴权。
+ *
+ * 所以策略是：
+ *   · 配了够长的 AUTH_SECRET → 用它（唯一正确的做法）
+ *   · 没配 / 还是占位符 / 太短 → **本次进程随机生成一个**，并大声警告。
+ *     代价是重启或换副本后旧会话失效（用户要重新登录一次，
+ *     权益会在下次 syncFromServer 时恢复）—— 这远好过一个能被冒充的公开密钥。
+ */
+const UNSAFE_SECRETS = ['', 'dev-only-change-me', 'change-me-to-a-long-random-string'];
+let ephemeralSecret = null;
+
+function usingEnvSecret() {
+  const v = String(CONFIG.auth.secret || '');
+  return UNSAFE_SECRETS.indexOf(v) < 0 && v.length >= 16;
+}
+
+function secret() {
+  if (usingEnvSecret()) return String(CONFIG.auth.secret);
+  if (!ephemeralSecret) {
+    ephemeralSecret = crypto.randomBytes(32).toString('hex');
+    console.warn('[auth] ⚠️ 没有配置 AUTH_SECRET（或还是占位符/太短）→ 本次启动用一个随机密钥。');
+    console.warn('[auth]    影响：重启或换副本后所有会话失效，用户需要重新登录（权益会在下次同步时恢复）。');
+    console.warn('[auth]    修复：云托管「服务设置 → 环境变量」里配一个长随机串；');
+    console.warn('[auth]         `node tools/make-env-sheet.js` 会自动生成一个并写进粘贴表。');
+  }
+  return ephemeralSecret;
+}
+
+/** 密钥来源：env = 配好了；generated = 临时随机（重启后要重新登录） */
+function secretSource() {
+  return usingEnvSecret() ? 'env' : 'generated';
+}
+
 function sign(payload) {
-  return b64url(crypto.createHmac('sha256', CONFIG.auth.secret).update(payload).digest()).slice(0, 43);
+  return b64url(crypto.createHmac('sha256', secret()).update(payload).digest()).slice(0, 43);
 }
 
 function issueToken(openid) {
@@ -162,4 +201,4 @@ function resolveOwner(req, token) {
   return { owner: null, expired: true, anonymous: false };
 }
 
-module.exports = { login, issueToken, verifyToken, ownerOf, resolveOwner, isDevMode };
+module.exports = { login, issueToken, verifyToken, ownerOf, resolveOwner, isDevMode, secretSource };

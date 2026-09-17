@@ -604,6 +604,19 @@ const ROUTES = {
         devMode: wxauth.isDevMode(),
         hint: wxauth.isDevMode() ? '没配 WX_SECRET（或 WX_APPID）→ 按设备认人，换设备权益不跟随' : ''
       },
+      /**
+       * 会话密钥是不是配好了。
+       *
+       * 没配时服务端**不会报错**：它会临时随机一个密钥，功能全正常，
+       * 代价是重启后所有人要重新登录。这件事只有这里能看出来
+       * （token 是自签的，客户端不知道自己用的是临时密钥）。
+       */
+      auth: {
+        secretSource: wxauth.secretSource(),
+        hint: wxauth.secretSource() === 'env'
+          ? ''
+          : '没配 AUTH_SECRET → 用的是一次性随机密钥，重启后需要重新登录'
+      },
       characters: CHARACTERS.length,
       stats: store.stats()
     });

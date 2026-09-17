@@ -546,12 +546,18 @@ function diagnose() {
     if (res.ok) {
       const ai = res.body.ai || {};
       const login = res.body.login || {};
-      // ⚠️ 没配 WX_SECRET 时服务端不会报错，它安静地按设备 id 认人 ——
-      //    现象要到"用户换手机发现畅玩卡没了"才暴露，倒推不回原因。
-      //    所以这里宁可唠一句，也别让部署的人以为一切正常。
-      const loginWarn = login.devMode
-        ? '云托管还没配 WX_SECRET：现在是按设备认人，换手机后畅玩卡/记录不跟随（见 docs/DEPLOY-CLOUD.md 第 3 节）'
-        : '';
+      const auth = res.body.auth || {};
+      // ⚠️ 这两个"静默降级"都要说出来：
+      //    · 没配 WX_SECRET → 按设备认人，用户换手机才暴露
+      //    · 没配 AUTH_SECRET → 临时随机密钥，重启后所有人要重新登录
+      //    两种都不报错，只能靠这一屏看出来。
+      const warns = [];
+      if (login.devMode) {
+        warns.push('云托管还没配 WX_SECRET：现在是按设备认人，换手机后畅玩卡/记录不跟随（见 docs/DEPLOY-CLOUD.md 第 3 节）');
+      }
+      if (auth.secretSource === 'generated') {
+        warns.push('云托管还没配 AUTH_SECRET：会话密钥是临时生成的，服务重启后所有人需要重新登录一次');
+      }
       return {
         ok: true,
         base,
@@ -562,7 +568,7 @@ function diagnose() {
         model: ai.model || '',
         devLogin: !!login.devMode,
         message: ai.configured ? `正常（AI 已配置 · 走${where}）` : `后端正常，但 AI 未配置 key（走${where}）`,
-        hint: ai.configured ? loginWarn : '检查云托管控制台（或 server/.env）的 DEEPSEEK_API_KEY',
+        hint: ai.configured ? warns.join('\n') : '检查云托管控制台（或 server/.env）的 DEEPSEEK_API_KEY',
         reason: ''
       };
     }

@@ -22,6 +22,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 
 const ROOT = path.join(__dirname, '..');
 const ENV_FILE = path.join(ROOT, 'server', '.env');
@@ -65,6 +66,23 @@ const pick = (key, fallback) => {
   return fallback === undefined ? '' : fallback;
 };
 
+// AUTH_SECRET：会话 token 的签名密钥。
+// ⚠️ 没配的话服务端会临时随机一个（不会崩），代价是每次重启所有人都要重新登录，
+//    所以这里**自动生成一个够长的**并写进表里 —— 只生成一次，之后复用（存在 .env.cloud）。
+let authSecret = pick('AUTH_SECRET');
+let authSecretFresh = false;
+if (!authSecret || authSecret.length < 32) {
+  authSecret = crypto.randomBytes(32).toString('hex');
+  authSecretFresh = true;
+  const file = CLOUD_ENV_FILE;
+  const line = `AUTH_SECRET=${authSecret}`;
+  const prev = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+  const next = /^AUTH_SECRET=.*$/m.test(prev)
+    ? prev.replace(/^AUTH_SECRET=.*$/m, line)
+    : `${prev.replace(/\s*$/, '')}\n${line}\n`;
+  fs.writeFileSync(file, next, 'utf8');
+}
+
 const PAIRS = [
   ['PORT', '80'],
   // 云托管上必须用**内网**地址（外网地址只有我们本机能连）
@@ -75,6 +93,7 @@ const PAIRS = [
   ['DB_NAME', pick('DB_NAME', 'wo_tui_zhan_xing')],
   ['WX_APPID', pick('WX_APPID')],
   ['WX_SECRET', pick('WX_SECRET')],
+  ['AUTH_SECRET', authSecret],
   ['DEEPSEEK_API_KEY', pick('DEEPSEEK_API_KEY')],
   ['DEEPSEEK_BASE_URL', pick('DEEPSEEK_BASE_URL', 'https://api.deepseek.com')],
   ['DEEPSEEK_MODEL', pick('DEEPSEEK_MODEL', 'deepseek-flash')],
