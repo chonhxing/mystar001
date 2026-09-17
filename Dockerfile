@@ -42,9 +42,22 @@ COPY core ./core
 COPY data ./data
 COPY config ./config
 
+# ⚠️ 下面这行不是"可有可无的收尾"：
+#    WORKDIR / COPY 建出来的文件属主是 **root**，而进程跑在 USER node 下（见文件末尾）。
+#    server/store.js 每次落盘都会往 DATA_DIR 写一个 store.json，
+#    如果那个目录不存在又建不出来（EACCES），文件那份就会一直写失败。
+#    现在 store.js 已经把"文件那份"和"MySQL 那份"解耦了，不会丢数据 ——
+#    但日志里天天刷错误更容易把真问题埋掉，所以这里把权限一次给对。
+RUN mkdir -p /app/server/runtime && chown -R node:node /app
+
 # 云托管需要容器监听 80（控制台里可改，改了这里也要改）
 ENV PORT=80
 EXPOSE 80
+
+# 本地存档写到 /tmp：**容器没有持久化磁盘**，重启就没了，
+# 所以这里只当"随手放一下"，真正持久的是 MySQL 那份快照（server/store-mysql.js）。
+# 放 /tmp 还有个好处：它是唯一保证任何用户都能写的地方。
+ENV DATA_DIR=/tmp/wotui-data
 
 # 用非 root 跑：镜像里默认的 node 用户已经存在
 USER node

@@ -54,22 +54,38 @@ function createStore(opts) {
   function flush() {
     if (!dirty) return;
     dirty = false;
+    const json = JSON.stringify(data);
+
+    /**
+     * ① 本地 JSON 存档。
+     *
+     * 它只是"本地开发时的那份文件"，**写不进去很正常**：容器里常见只读盘、
+     * 目录属主是 root（而进程跑在 USER node 下）、磁盘满、路径被占……
+     * 所以它有自己的 try —— 失败只记一行日志，绝不影响下面那份真正持久的。
+     */
     try {
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       const tmp = `${file}.tmp`;
-      const json = JSON.stringify(data);
       fs.writeFileSync(tmp, json);
       fs.renameSync(tmp, file); // 先写临时文件再改名，避免写一半断电
-      // 挂了 MySQL 出口就顺带回写一份（云托管上这是唯一持久的副本）
-      if (saveHook) {
-        try {
-          saveHook(json);
-        } catch (e) {
-          console.error('[store] 外部落盘失败:', e.message);
-        }
-      }
     } catch (e) {
-      console.error('[store] 落盘失败:', e.message);
+      console.error(`[store] 本地存档写入失败（不影响外部落盘）: ${e.message}`);
+    }
+
+    /**
+     * ② 额外的落盘出口（云托管上挂的是 MySQL，那是唯一持久的副本）。
+     *
+     * ⚠️ **必须写在上面那个 try 的外面**。以前两者共用一个 try，
+     *    本地文件写失败会直接跳到 catch，把这一步整段跳过 ——
+     *    现象极难查：容器起得来、健康检查通过、AI 能用，
+     *    但每次重启用户数据全没（畅玩卡、订单、记录），而且一声不响。
+     */
+    if (saveHook) {
+      try {
+        saveHook(json);
+      } catch (e) {
+        console.error('[store] 外部落盘失败:', e.message);
+      }
     }
   }
 

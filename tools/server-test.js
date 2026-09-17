@@ -376,8 +376,49 @@ function waitFor(url, tries) {
     ok(bad.length === 0, `${cases.length} 种模型输出形态都能正确解析`, bad.join('、'));
   }
 
-  // ------------------------------------------------------------ AI 总预算
-  section('5.6 AI 总预算（重试不能越过它，也不能超过客户端愿意等的时间）');
+  // ------------------------------------------------------------ 落盘解耦
+  section('5.6 落盘：本地文件写不进去时，MySQL 那份（唯一持久副本）也不能丢');
+  {
+    // 这条来自一个真实的坑：容器里 /app 属主是 root、进程跑在 USER node 下，
+    // 于是 server/runtime 建不出来 → store.json 写失败。
+    // 修复前两者共用一个 try，文件一失败就**跳过** MySQL 落盘 ——
+    // 现象是"容器一切正常、重启后用户数据全没"，而且一声不响。
+    // 这里用一个"目录名其实是文件"的路径稳定复现写失败（等价于 EACCES）。
+    const os = require('os');
+    const fsMod = require('fs');
+    const { createStore } = require(path.join(__dirname, '..', 'server', 'store.js'));
+
+    const blocked = path.join(os.tmpdir(), `wotui-blocked-${process.pid}-${Date.now()}`);
+    fsMod.writeFileSync(blocked, 'x'); // 占住这个名字
+
+    let hooked = null;
+    const s2 = createStore({ dataDir: blocked, proseCacheDays: 30 });
+    s2.setSaveHook((json) => { hooked = json; });
+    s2.bumpStat('calls');
+    s2.save();
+
+    ok(hooked !== null, '本地文件写失败时，外部落盘钩子照样被调用');
+    const snap = hooked ? JSON.parse(hooked) : {};
+    ok(snap && snap.stats && snap.stats.calls === 1, '钩子拿到的是完整快照（不是空壳）');
+
+    fsMod.unlinkSync(blocked);
+
+    // 正常路径也不能坏：目录不存在时会自己建出来
+    const fresh = path.join(os.tmpdir(), `wotui-fresh-${process.pid}-${Date.now()}`);
+    const s3 = createStore({ dataDir: fresh, proseCacheDays: 30 });
+    let hooked3 = null;
+    s3.setSaveHook((json) => { hooked3 = json; });
+    s3.bumpStat('calls');
+    s3.save();
+    ok(hooked3 !== null, '本地文件正常时，外部落盘照旧');
+    ok(fsMod.existsSync(path.join(fresh, 'store.json')), '本地存档文件也真的写出来了');
+    // 收尾：删掉这个临时目录
+    try {
+      fsMod.unlinkSync(path.join(fresh, 'store.json'));
+      fsMod.rmdirSync(fresh);
+    } catch (e) { /* 收尾失败不影响结论 */ }
+  }
+  section('5.7 AI 总预算（重试不能越过它，也不能超过客户端愿意等的时间）');
   {
     // 直接给 chat() 塞一个假 fetch：不碰真网络，能把"调了几次、等了多久"量出来
     const deepseek = require(path.join(__dirname, '..', 'server', 'deepseek.js'));

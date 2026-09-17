@@ -284,8 +284,7 @@ section('5. 关键约定与合规');
    * 两个值分别在 config/index.js 和 server/config.js，改一个很容易忘了另一个，
    * 所以在这里钉死。
    */
-  const serverConfig = require(path.join(ROOT, 'server/config.js'));
-  const waitMs = CONFIG.DIVINATE_WAIT_MS;
+  const serverConfig = require(path.join(ROOT, 'server/config.js'));  const waitMs = CONFIG.DIVINATE_WAIT_MS;
   const budgetMs = serverConfig.CONFIG.ai.budgetMs;
   const syncBudgetMs = serverConfig.CONFIG.ai.syncBudgetMs;
   const margin = 5000; // 留一点网络往返 + 服务端收尾的余量
@@ -307,6 +306,26 @@ section('5. 关键约定与合规');
 
   const art = require(path.join(ROOT, 'utils/art.js'));
   ok(!!art.resolveArt({ id: 'naruto', name: '漩涡鸣人', rarity: 'epic' }).glyph, '美术未就位时占位渲染可用');
+
+  /**
+   * Dockerfile 的两条硬约束。它们对应一个真实踩过的坑：
+   *   WORKDIR / COPY 建出来的文件属主是 root，而镜像末尾是 `USER node`,
+   *   于是 server/runtime 建不出来、store.json 一直写失败。
+   *   当时 store.js 还把"文件落盘"和"MySQL 落盘"写在一个 try 里，
+   *   文件一失败就把 MySQL 也跳过了 —— 容器一切正常，重启后用户数据全没。
+   * 现在两侧都修好了（store.js 已解耦，这里再钉住 Dockerfile 这一侧）。
+   */
+  const dockerfile = fs.readFileSync(path.join(ROOT, 'Dockerfile'), 'utf8');
+  const usesNodeUser = /\nUSER\s+node\b/.test(dockerfile);
+  const chowns = /chown[^\n]*node/.test(dockerfile);
+  ok(!usesNodeUser || chowns,
+    'Dockerfile 用非 root 跑时，必须把 /app 的属主交给 node（否则存档目录建不出来）',
+    usesNodeUser && !chowns ? '有 USER node 但没有 chown —— 容器里写文件会 EACCES' : '');
+  const dataDirMatch = /ENV\s+DATA_DIR=(\S+)/.exec(dockerfile);
+  const dataDirInApp = dataDirMatch && dataDirMatch[1].indexOf('/app') === 0;
+  ok(!dataDirInApp,
+    `容器里的 DATA_DIR 不放在 /app 下（${dataDirMatch ? dataDirMatch[1] : '未设置，用代码默认值'}）`,
+    dataDirInApp ? '容器没有持久化磁盘，写在 /app 下会随镜像权限/重建出问题，应该放 /tmp' : '');
 
   // 合规：用户可见文案里不能出现高风险词（config/copy.js 已做统一替换）
   const copy = require(path.join(ROOT, 'config/copy.js'));
