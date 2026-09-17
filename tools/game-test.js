@@ -1704,6 +1704,61 @@ let stageRef = null;
           (w.children || []).forEach(walk3);
         })(scene3.root);
         ok(texts3.join('｜').indexOf('WX_SECRET') >= 0, '这段提示真的渲染在页面上');
+
+        // ⑤ 后端通了、WX_SECRET 也配了，但没配 AUTH_SECRET：
+        //    服务端会临时随机一个密钥，功能全对，只是每次重启所有人要重新登录。
+        //    这种"一切正常但有隐患"的状态同样必须标出来（状态点不能是绿的）。
+        global.wx.request = (o) => {
+          setTimeout(() => {
+            if (o.success) {
+              o.success({
+                statusCode: 200,
+                data: {
+                  ok: true,
+                  ai: { configured: true, model: 'deepseek-flash' },
+                  login: { devMode: false, hint: '' },
+                  auth: { secretSource: 'generated', hint: '没配 AUTH_SECRET → 用的是一次性随机密钥，重启后需要重新登录' },
+                  characters: 60
+                }
+              });
+            }
+            if (o.complete) o.complete();
+          }, 2);
+        };
+        const scene4 = router.current();
+        scene4.checkBackend();
+        await sleep(80);
+        step(1);
+        ok(String(scene4.backend.text).indexOf('正常') >= 0, `这时主状态是"正常"（${scene4.backend.text}）`);
+        ok(scene4.backend.state === 'warn', `但状态点标黄提醒（${scene4.backend.state}）`);
+        ok(String(scene4.backend.detail).indexOf('AUTH_SECRET') >= 0,
+          '并说明该去配 AUTH_SECRET（重启后要重新登录）');
+
+        // ⑥ 两样都配好 → 才应该是干净的"正常"（绿点、没有提示段落）
+        global.wx.request = (o) => {
+          setTimeout(() => {
+            if (o.success) {
+              o.success({
+                statusCode: 200,
+                data: {
+                  ok: true,
+                  ai: { configured: true, model: 'deepseek-flash' },
+                  login: { devMode: false, hint: '' },
+                  auth: { secretSource: 'env', hint: '' },
+                  characters: 60
+                }
+              });
+            }
+            if (o.complete) o.complete();
+          }, 2);
+        };
+        const scene5 = router.current();
+        scene5.checkBackend();
+        await sleep(80);
+        step(1);
+        ok(scene5.backend.state === 'ok' && !scene5.backend.detail,
+          `全配好时是干净的"正常"（state=${scene5.backend.state}，detail=${scene5.backend.detail ? '有' : '无'}）`);
+
         global.wx.request = realRequest;
       }
     }

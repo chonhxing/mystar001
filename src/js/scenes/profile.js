@@ -378,14 +378,16 @@ class ProfileScene extends Scene {
       // 第一次部署时"走的是云调用还是公网"这一条信息能省掉半小时瞎猜：
       // 云调用失败（服务名/环境 ID/没部署）和服务没起，解决办法完全不同。
       const via = d.via === 'cloud' ? '云调用' : '公网';
-      const state = d.ok ? (d.devLogin ? 'warn' : (d.aiConfigured ? 'ok' : 'warn')) : 'bad';
+      // 状态点由"有没有要提醒的话"统一决定：只要 detail 里有话，就不该是绿的
+      // （以前是按 devLogin 单独判断，结果"没配 AUTH_SECRET"会绿点配一段警告，自相矛盾）
+      const state = !d.ok ? 'bad' : (d.hint ? 'warn' : (d.aiConfigured ? 'ok' : 'warn'));
       const short = d.ok
         ? `${via} · ${d.aiConfigured ? (d.devLogin ? '按设备认人' : '正常') : 'AI 未配置'}`
         : `${via}失败`;
       this.backend = {
         text: short,
         state,
-        detail: (d.ok && d.aiConfigured && !d.hint) ? '' : `${d.message}${d.hint ? `\n${d.hint}` : ''}`
+        detail: d.ok && d.aiConfigured && !d.hint ? '' : `${d.message}${d.hint ? `\n${d.hint}` : ''}`
       };
       this.build();
     });
