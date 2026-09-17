@@ -705,12 +705,16 @@ class TodayCard extends Widget {
     y += 76;
 
     const f = this.f || { good: [], bad: [], levelDesc: '' };
-    const descPara = new Paragraph({
+    /**
+     * ⚠️ 这里把所有要画的文字对象**建好存起来**，drawSelf 只负责画。
+     *    在 drawSelf 里 new Paragraph / new IconText 等于每帧都新建几个对象 ——
+     *    卡片是常驻的，60fps 下就是持续的垃圾回收压力（低端机上表现为掉帧）。
+     */
+    this.descPara = new Paragraph({
       x: 0, y: 0, w: innerW, text: f.levelDesc || '', size: FONT.body, color: COLOR.ink2, lineHeight: 46
     });
     this.descY = y;
-    y += descPara.h + 22;
-    this.descH = descPara.h;
+    y += this.descPara.h + 22;
 
     this.line1Y = y;
     y += 24;
@@ -737,6 +741,12 @@ class TodayCard extends Widget {
     }
     this.rowH = 50;
     this.rowGap = 6;
+    this.rowWidgets = this.rows.map((r) => new IconText({
+      x: 0, y: 0, w: innerW, h: this.rowH,
+      icon: r.icon, iconColor: r.iconColor, iconAlpha: r.icon === 'diamond' ? 0.6 : 0.9,
+      text: r.text, size: r.size || FONT.body, color: r.color,
+      maxWidth: innerW - 56 - 16
+    }));
     y += this.rows.length * (this.rowH + this.rowGap) - this.rowGap;
     y += 22;
 
@@ -779,27 +789,17 @@ class TodayCard extends Widget {
     draw.starsRow(ctx, starLeft, this.headY, starSize, f.stars || 0, 5, starGap);
 
     // ---- 一句话 ----
-    const descPara = new Paragraph({
-      x: 0, y: 0, w: innerW, text: f.levelDesc || '', size: FONT.body, color: COLOR.ink2, lineHeight: 46
-    });
     ctx.save();
     ctx.translate(pad, this.descY);
-    descPara.drawSelf(ctx);
+    this.descPara.drawSelf(ctx);
     ctx.restore();
 
     // ---- 宜 / 忌 ----
     draw.hairline(ctx, pad, this.line1Y, this.w - pad, 'rgba(255,255,255,0.06)');
     let ry = this.line1Y + 24;
-    this.rows.forEach((r) => {
+    this.rowWidgets.forEach((item) => {
       ctx.save();
       ctx.translate(pad, ry);
-      const isLucky = r.icon === 'diamond';
-      const item = new IconText({
-        x: 0, y: 0, w: innerW, h: this.rowH,
-        icon: r.icon, iconColor: r.iconColor, iconAlpha: isLucky ? 0.6 : 0.9,
-        text: r.text, size: r.size || FONT.body, color: r.color,
-        maxWidth: innerW - 56 - 16
-      });
       item.drawSelf(ctx);
       ctx.restore();
       ry += this.rowH + this.rowGap;
