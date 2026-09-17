@@ -1,33 +1,45 @@
 {
-  	// 本配置文件仅配合模板部署使用，为模板部署的服务生成「服务设置」的初始值。
-	// 模板部署结束后，后续服务发布与本配置文件完全无关，修改「服务设置」请到控制台操作。
-	// 复制模板代码自行开发请忽略本配置文件。
-  
+  "_说明": [
+    "微信云托管的服务配置。官方注释说这个文件『仅配合模板部署使用』，从自己的仓库部署时",
+    "以控制台里的「服务设置」为准 —— 所以这里同时当一份**配置清单**用：控制台照着填就能对上。",
+    "",
+    "⚠️ 部署前必须改的两条（照模板默认值会出问题）：",
+    "  · maxNum 必须 = 1 —— 服务端把数据整份快照存进 MySQL 一行，多副本会互相覆盖",
+    "    （见 server/store-mysql.js 顶部）。模板默认是 5，一定要压到 1。",
+    "  · minNum = 0 会在无请求半小时后缩容到 0，下次请求要走冷启动。想要『随时是热的』就设 1，",
+    "    代价是一直占着资源计费。",
+    "",
+    "⚠️ envParams 里不要填真实密钥：这个文件会进 git。密钥在控制台环境变量里填（值从 server/.env 抄）。"
+  ],
+
   "containerPort": 80,
   "dockerfilePath": "Dockerfile",
   "buildDir": "",
   "minNum": 0,
-  "maxNum": 5,
-  "cpu": 1,
-  "mem": 2,
+  "maxNum": 1,
+  "cpu": 0.25,
+  "mem": 0.5,
   "policyType": "cpu",
   "policyThreshold": 80,
   "policyDetails": [
-	{
-		"PolicyType": "cpu",
-		"PolicyThreshold": 80
-	},
-	{
-		"PolicyType": "mem",
-		"PolicyThreshold": 80
-	}
+    { "PolicyType": "cpu", "PolicyThreshold": 80 },
+    { "PolicyType": "mem", "PolicyThreshold": 80 }
   ],
-  "envParams": {},
+  "envParams": {
+    "PORT": "80",
+    "DB_HOST": "10.19.112.185",
+    "DB_PORT": "3306",
+    "DB_USER": "root",
+    "DB_PASSWORD": "",
+    "DB_NAME": "wo_tui_zhan_xing",
+    "WX_APPID": "wxf34d29bb49d6cdc3",
+    "WX_SECRET": "",
+    "DEEPSEEK_API_KEY": "",
+    "DEEPSEEK_MODEL": "deepseek-v4-pro",
+    "SHOW_AI_LABEL": "1"
+  },
   "customLogs": "stdout",
-  "initialDelaySeconds": 2,
-  "dataBaseName": "nodejs_demo",
-  "executeSQLs": [
-    "CREATE DATABASE IF NOT EXISTS nodejs_demo;",
-    "USE nodejs_demo;"
-  ]
+  "initialDelaySeconds": 5,
+  "dataBaseName": "wo_tui_zhan_xing",
+  "executeSQLs": []
 }
