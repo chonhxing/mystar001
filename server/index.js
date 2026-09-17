@@ -593,6 +593,17 @@ const ROUTES = {
       version: APP_CONFIG.VERSION,
       uptimeSec: Math.round((Date.now() - startedAt) / 1000),
       ai: { configured: aiReady(), model: aiReady() ? CONFIG.ai.model : null, picksCharacter: CONFIG.ai.aiPicksCharacter },
+      /**
+       * 登录是"真微信登录"还是"按设备认人"。
+       *
+       * 为什么要报出来：没配 WX_SECRET 时服务端**不会报错**，它安静地按设备 id 认人 ——
+       * 一切看起来都正常，直到用户换手机（畅玩卡、记录全不见）或想跨设备同步。
+       * 这类问题从现象根本倒推不到原因，所以状态页必须能直接说出来。
+       */
+      login: {
+        devMode: wxauth.isDevMode(),
+        hint: wxauth.isDevMode() ? '没配 WX_SECRET（或 WX_APPID）→ 按设备认人，换设备权益不跟随' : ''
+      },
       characters: CHARACTERS.length,
       stats: store.stats()
     });

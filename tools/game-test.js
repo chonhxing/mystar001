@@ -1637,6 +1637,7 @@ let stageRef = null;
       ok(typeof diag.where === 'string' && diag.where.length > 0,
         `诊断结果能说清连的是哪儿：${diag.where}`);
       ok(typeof diag.message === 'string' && diag.message.length > 0, '诊断结果有一句人话');
+      ok(typeof diag.devLogin === 'boolean', `诊断结果标了登录模式（devLogin=${diag.devLogin}）`);
 
       // ③ 设置页把"短状态"和"怎么办"分开显示：
       //    短状态进那一行（SettingRow 的 desc 不换行），长提示进下面的段落
@@ -1660,6 +1661,50 @@ let stageRef = null;
       if (scene2.backend.detail) {
         ok(joined.indexOf(scene2.backend.detail.split('\n')[0].slice(0, 10)) >= 0,
           '失败时把"该怎么办"整段显示出来了（没被截断）');
+      }
+
+      // ④ 后端**通了但没配 WX_SECRET**：这是最容易被忽略的状态 ——
+      //    一切看起来都正常（AI 能用、记录能存），直到用户换手机发现权益没了。
+      //    造一个"健康的 health 响应"来验页面会主动提示。
+      {
+        const realRequest = global.wx.request;
+        let asked = 0;
+        global.wx.request = (o) => {
+          asked += 1;
+          setTimeout(() => {
+            if (o.success) {
+              o.success({
+                statusCode: 200,
+                data: {
+                  ok: true,
+                  ai: { configured: true, model: 'deepseek-flash' },
+                  login: { devMode: true, hint: '没配 WX_SECRET（或 WX_APPID）→ 按设备认人，换设备权益不跟随' },
+                  characters: 60
+                }
+              });
+            }
+            if (o.complete) o.complete();
+          }, 2);
+        };
+        const scene3 = router.current();
+        scene3.checkBackend();
+        await sleep(80);
+        step(1);
+        ok(asked > 0, '检测时确实打了后端一次');
+        ok(scene3.backend.state === 'warn', `按设备认人标记为"注意"而不是"正常"（${scene3.backend.state}）`);
+        ok(String(scene3.backend.text).indexOf('按设备认人') >= 0,
+          `那一行直接写明"按设备认人"（${scene3.backend.text}）`);
+        ok(String(scene3.backend.detail).indexOf('WX_SECRET') >= 0,
+          '并给出了"去配 WX_SECRET"的可执行提示');
+        const texts3 = [];
+        (function walk3(w) {
+          ['text', 'content', 'desc'].forEach((f) => {
+            if (typeof w[f] === 'string' && w[f]) texts3.push(w[f]);
+          });
+          (w.children || []).forEach(walk3);
+        })(scene3.root);
+        ok(texts3.join('｜').indexOf('WX_SECRET') >= 0, '这段提示真的渲染在页面上');
+        global.wx.request = realRequest;
       }
     }
   }

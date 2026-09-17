@@ -147,9 +147,9 @@ git ls-files | grep -E "\.env$"     # 应该什么都没有
 | `PORT` | `80` | 和上面"监听端口"一致 |
 | `DEEPSEEK_API_KEY` | 你的 key | **只在服务端**，绝不下发客户端 |
 | `DEEPSEEK_MODEL` | `deepseek-flash` | 实测 9~14 秒；换成 `deepseek-v4-pro` 是 50 秒一次，会顶着超时线（对比脚本 `tools/probe-model.js`） |
-| `WX_APPID` | `wxf34d29bb49d6cdc3` | |
-| `WX_SECRET` | 小游戏的 AppSecret | 换 openid 要用；**不填会进开发模式** |
-| `DB_HOST` | 云托管 MySQL 的**内网地址** | 控制台 → 数据库 → 连接信息 |
+| `WX_APPID` | `wxf34d29bb49d6cdc3` | `wx` 开头的短串 |
+| `WX_SECRET` | 小游戏的 **AppSecret** | ⚠️ 见下面那一段，别和 AppID 搞混 |
+| `DB_HOST` | 云托管 MySQL 的**内网地址** | 控制台 → 数据库 → 连接信息（`10.19.112.185`） |
 | `DB_PORT` | `3306` | |
 | `DB_USER` | `root` | |
 | `DB_PASSWORD` | **改过之后的新密码** | |
@@ -158,6 +158,30 @@ git ls-files | grep -E "\.env$"     # 应该什么都没有
 | `SHOW_AI_LABEL` | `1` | AI 生成标识，合规要求，别关 |
 
 其余可选项见 `server/.env.example`（每个变量都有注释）。
+
+### ⚠️ WX_SECRET 是 AppSecret，不是 AppID（少了它不会报错，但会静默降级）
+
+| | 长相 | 从哪来 |
+| --- | --- | --- |
+| `WX_APPID` | `wx` + 16 位，如 `wxf34d29bb49d6cdc3` | 开发者ID 页面的 AppID |
+| `WX_SECRET` | **32 位字母数字**，如 `3f8a9c…` | 同一页面的 **AppSecret** → 重置 → 复制 |
+
+**不填的后果很隐蔽**：服务端不会报错，它安静地改成"**按设备认人**"——
+AI 能用、记录能存，一切看起来正常，直到用户换手机，发现畅玩卡和记录都没了。
+所以这个值必须配，而且部署后要去「我的 → 设置 → 解读服务状态」确认那一行
+显示的是**正常**而不是**按设备认人**。
+
+### 生成这张表（别手抄）
+
+```bash
+node tools/make-env-sheet.js      # 写到桌面：云托管环境变量-粘贴用.txt
+```
+
+它按这个顺序取值，所以不会和代码里的默认值漂开：
+`container.config.json`（非密钥基建值）→ `server/.env`（本地开发那份）→
+`server/.env.cloud`（**只在云上用的密钥**，如数据库密码、`WX_SECRET`，已 gitignore）。
+生成的文件是 UTF-8 无 BOM（上次手写那份变成 UTF-16，记事本打开是乱码），
+里面含明文密钥，**填完控制台就删掉**。
 
 ---
 
@@ -269,6 +293,7 @@ DB_CHECK_PASSWORD=你的库密码 npm run db:e2e     # 起服务 → 造数据 �
 | 健康检查通过 | 浏览器打开 `https://<默认域名>/api/health`，返回 `{"ok":true,...}` |
 | 数据真落库了 | `store_snapshot` 里出现一行，且 `data` 里有 `users`（不是空快照） |
 | 真机能连上 | 预览 → 我的 → 设置 → 解读服务状态 |
+| **登录是真的微信登录**（不是按设备认人） | 同一屏：那一行应该是「正常」；如果写「按设备认人」，说明 `WX_SECRET` 没配 —— 这时 AI 和记录都正常，但用户换手机会丢畅玩卡 |
 | 隐私指引已声明 | 昵称头像 + 出生信息，见 `docs/COMPLIANCE.md` |
 | 云托管**公网域名**建议关掉 | 见下：AI 已经不依赖它了 |
 | **最大副本数 = 1** | ⚠️ 见第 7 节：模板默认 5，会把快照存储写坏 |

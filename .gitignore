@@ -16,6 +16,8 @@ server/.tmp-*/
 # 环境变量（含 API key，绝对不要提交）
 .env
 server/.env
+# 云托管专用的那几个值（数据库密码、WX_SECRET）—— 同样含密钥，理由同上
+server/.env.cloud
 
 # 微信开发者工具的本地配置（含个人设置，含 appid 时也别提交）
 project.private.config.json

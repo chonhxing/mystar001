@@ -378,13 +378,14 @@ class ProfileScene extends Scene {
       // 第一次部署时"走的是云调用还是公网"这一条信息能省掉半小时瞎猜：
       // 云调用失败（服务名/环境 ID/没部署）和服务没起，解决办法完全不同。
       const via = d.via === 'cloud' ? '云调用' : '公网';
+      const state = d.ok ? (d.devLogin ? 'warn' : (d.aiConfigured ? 'ok' : 'warn')) : 'bad';
       const short = d.ok
-        ? `${via} · ${d.aiConfigured ? '正常' : 'AI 未配置'}`
+        ? `${via} · ${d.aiConfigured ? (d.devLogin ? '按设备认人' : '正常') : 'AI 未配置'}`
         : `${via}失败`;
       this.backend = {
         text: short,
-        state: d.ok ? (d.aiConfigured ? 'ok' : 'warn') : 'bad',
-        detail: d.ok && d.aiConfigured ? '' : `${d.message}${d.hint ? `\n${d.hint}` : ''}`
+        state,
+        detail: (d.ok && d.aiConfigured && !d.hint) ? '' : `${d.message}${d.hint ? `\n${d.hint}` : ''}`
       };
       this.build();
     });

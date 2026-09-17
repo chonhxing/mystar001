@@ -201,6 +201,15 @@ function waitFor(url, tries) {
     ok(h.body.characters === 60, `health 报告角色数 = ${h.body.characters}`);
     ok(!/test-key-must-not-leak/.test(h.raw), 'health 不泄露 API key');
 
+    // 登录模式必须报出来：没配 WX_SECRET 时服务端**不报错**，
+    // 它安静地按设备认人，现象要到"用户换手机发现权益没了"才暴露。
+    // 所以状态页得能直接看到当前是哪种模式（部署时最容易漏的一项）。
+    ok(h.body.login && typeof h.body.login.devMode === 'boolean',
+      `health 报告登录模式（devMode=${h.body.login && h.body.login.devMode}）`);
+    ok(h.body.login.devMode === true, '本测试没配 WX_SECRET → 明确标记为按设备认人');
+    ok(String(h.body.login.hint).indexOf('WX_SECRET') >= 0, '并给出"该配哪个变量"的提示');
+    ok(!/secret/i.test(h.raw.replace(/WX_SECRET/g, '')), '提示里没有真的 secret 值');
+
     const r = await get('/api/roster');
     ok(r.status === 200 && r.body.characters.length === 60, 'GET /api/roster 下发角色库');
     ok(!!r.body.disclaimer, 'roster 带合规声明');

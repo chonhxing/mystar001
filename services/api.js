@@ -545,6 +545,13 @@ function diagnose() {
     const where = via === 'cloud' ? `云调用（${cloud.service} / ${cloud.env}）` : `公网 ${base}`;
     if (res.ok) {
       const ai = res.body.ai || {};
+      const login = res.body.login || {};
+      // ⚠️ 没配 WX_SECRET 时服务端不会报错，它安静地按设备 id 认人 ——
+      //    现象要到"用户换手机发现畅玩卡没了"才暴露，倒推不回原因。
+      //    所以这里宁可唠一句，也别让部署的人以为一切正常。
+      const loginWarn = login.devMode
+        ? '云托管还没配 WX_SECRET：现在是按设备认人，换手机后畅玩卡/记录不跟随（见 docs/DEPLOY-CLOUD.md 第 3 节）'
+        : '';
       return {
         ok: true,
         base,
@@ -553,8 +560,9 @@ function diagnose() {
         where,
         aiConfigured: !!ai.configured,
         model: ai.model || '',
+        devLogin: !!login.devMode,
         message: ai.configured ? `正常（AI 已配置 · 走${where}）` : `后端正常，但 AI 未配置 key（走${where}）`,
-        hint: ai.configured ? '' : '检查云托管控制台（或 server/.env）的 DEEPSEEK_API_KEY',
+        hint: ai.configured ? loginWarn : '检查云托管控制台（或 server/.env）的 DEEPSEEK_API_KEY',
         reason: ''
       };
     }
@@ -565,6 +573,9 @@ function diagnose() {
       via,
       cloud,
       where,
+      // 形状要保持一致：连不上时"是不是按设备认人"无从得知，报 false 而不是 undefined，
+      // 调用方就不用写 `=== true` 这种防御式判断
+      devLogin: false,
       reason: key,
       message: `${REASON_TEXT[key] || res.message || '连不上解读服务'}（走的是${where}）`,
       hint: key === 'CLOUD'
