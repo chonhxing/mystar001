@@ -229,24 +229,20 @@ class UnlockSheet extends Widget {
 
   byAd() {
     if (this.busy) return;
-    if (!reward.isAvailable()) {
-      // 没配广告位（开发期 / 流量主还没下来）：直接送一次，不让流程卡死。
-      // ⚠️ 提审前要确认广告位是否已配好，否则这等于"免费无限"。
-      analytics.report(analytics.REPORTABLE.AD_FAILED, { reason: 'UNAVAILABLE' });
-      entitlement.grantTickets(1);
-      this.finish({ ok: true, kind: 'ticket', via: 'ad_unavailable' });
-      return;
-    }
-
-    this.setBusy(true, copy.UI.unlockAdPlaying);
-    reward.showRewarded('divinate_again').then((ok) => {
-      this.setBusy(false);
-      if (ok) {
-        entitlement.grantTickets(1);
-        this.finish({ ok: true, kind: 'ticket', via: 'ad' });
-      } else {
-        this.toast(copy.UI.unlockAdFail);
+    // 策略（有没有广告位、没广告位时给不给）全在 reward.unlockByAd 里，
+    // 这里只负责 UI：转圈、提示、发券、收面板
+    const hasAd = reward.isAvailable();
+    if (hasAd) this.setBusy(true, copy.UI.unlockAdPlaying);
+    reward.unlockByAd().then((r) => {
+      if (hasAd) this.setBusy(false);
+      if (!r.granted) {
+        // AD_NOT_OPEN = 广告位没开放且配置成不发放；AD_INCOMPLETE = 没看完
+        this.toast(r.reason === 'AD_NOT_OPEN' ? copy.UI.unlockAdNotOpen : copy.UI.unlockAdFail);
+        return;
       }
+      if (r.reason === 'AD_NOT_OPEN_GRANTED') this.toast(copy.UI.unlockAdNotOpen);
+      entitlement.grantTickets(1);
+      this.finish({ ok: true, kind: 'ticket', via: r.reason === 'ad' ? 'ad' : 'ad_unavailable' });
     });
   }
 

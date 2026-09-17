@@ -28,16 +28,16 @@
 - 模型名以接口为准：**只支持 `deepseek-flash` 和 `deepseek-v4-pro`**，
   你说想用的 **`deepseek-v4.1` 会被 400 拒绝**（接口原话：
   `The supported API model names are deepseek-flash, deepseek-v4-pro`）。
-  现在默认用 `deepseek-v4-pro`。
-- **实测数据**（真实调用，见 `npm run test:live`）：
+  **现在默认用 `deepseek-flash`**（同一个提示词实测对比后选的，见下）。
+- **实测数据**（真实调用，见 `npm run test:live` / `tools/probe-model.js`）：
 
   | 模型 | 耗时 | 输出 token（含思考） | 单次成本粗算 |
   | --- | --- | --- | --- |
-  | deepseek-v4-pro | 37.4s | 3262（思考 2847） | ≈ ¥0.029 |
-  | deepseek-flash | 16.4s | 2785（思考 2370） | ≈ ¥0.025 |
+  | deepseek-flash（**默认**） | 8.7 / 12.2 / 13.6s | 1500~2200（思考 1000~1750） | ≈ ¥0.025 |
+  | deepseek-v4-pro | 50s（另有一次被 max_tokens 截断） | 3336（思考 2933） | ≈ ¥0.029 |
 
-  两个都是**推理模型**，会先"想"一大段（思考 token 占 80%+），所以比我原先估的贵、
-  也慢不少。好消息是文案质量确实好（会真的引用你的四柱和角色意象，不是套模板），
+  flash 快 4 倍、更便宜、JSON 更少截断，文案照样具体（会真的引用你的四柱和角色意象，
+  不是套模板）；pro 每次 50 秒，几乎顶着超时线，思考还容易吃满 `max_tokens` 把 JSON 截断。
   而且**结果页不受影响**：本机图谱是秒出的，AI 文案回来了再原地替换。
 - 需要你定：**每人每天几次**（`DAILY_PER_USER`，现在 10 次）、
   **全站每天上限**（`DAILY_GLOBAL`，现在 3000 次）。按十次/人算，一万个日活约 ¥2900/天 —— 

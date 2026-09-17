@@ -73,7 +73,7 @@ function describeBadOutput(content) {
 
 /**
  * @param {Array} messages [{role, content}]
- * @param {object} opts { json: boolean, maxTokens, temperature, tag }
+ * @param {object} opts { json: boolean, maxTokens, temperature, tag, budgetMs }
  * @returns {{ok:boolean, data?:object, usage?:object, model?:string, error?:string, raw?:string}}
  */
 async function chat(messages, opts) {
@@ -95,7 +95,40 @@ async function chat(messages, opts) {
   const maxAttempts = Math.max(1, 1 + (CONFIG.ai.retries || 0));
   let lastError = 'UNKNOWN';
 
+  /**
+   * **整次调用的总预算**（含所有重试），不是单次超时。
+   *
+   * 为什么必须有：解读实测要 9~14 秒（flash），慢的时候会到 40 秒以上；
+   * 单次超时 × 重试次数很容易越过客户端愿意等的时间（`config.DIVINATE_WAIT_MS`）——
+   * 那段错位里用户在看本地模板文案，服务端却还在为一个没人等的请求付费。
+   * 加上总预算之后，服务端最迟在预算到点就放弃，客户端一定等得到最终答复。
+   */
+  const budgetMs = o.budgetMs || CONFIG.ai.budgetMs;
+  const deadline = Date.now() + budgetMs;
+  /**
+   * 重试一次至少要剩这么多时间才值得开。
+   *
+   * 为什么不是个固定的小数字（比如 10 秒）：一次解读本来就要 40~55 秒，
+   * "剩 15 秒去重试"的结果是**必然再超时一次**，白白多付一次请求的钱、多点一个模型。
+   * 按单次超时的 60% 来算，含义很直白：重试至少要有"一次正常尝试"的余量。
+   * 注意这只拦"要不要重试"——**第一次尝试永远会发出去**，
+   * 否则预算给小了（比如测试里的 1ms）会变成一次都不发就失败。
+   */
+  const MIN_RETRY_MS = Math.max(10000, Math.round(CONFIG.ai.timeoutMs * 0.6));
+  // 单次尝试的下限，避免预算被配成 1ms 时 AbortSignal.timeout(0) 立刻取消
+  const MIN_ATTEMPT_MS = 1000;
+
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const first = attempt === 1;
+    const left = deadline - Date.now();
+    if (!first && left < MIN_RETRY_MS) {
+      const used = budgetMs - Math.max(0, left);
+      console.error(`[ai] ${o.tag || ''} 总预算用尽（已用 ${used}ms / ${budgetMs}ms），不再重试`);
+      if (lastError === 'UNKNOWN') lastError = 'BUDGET_EXHAUSTED';
+      break;
+    }
+    // 第一次尝试也受总预算约束（预算比单次超时短时，以预算为准）
+    const attemptMs = Math.max(MIN_ATTEMPT_MS, Math.min(CONFIG.ai.timeoutMs, first ? budgetMs : left));
     const started = Date.now();
     try {
       const res = await fetch(url, {
@@ -105,7 +138,7 @@ async function chat(messages, opts) {
           Authorization: `Bearer ${CONFIG.ai.apiKey}`
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(CONFIG.ai.timeoutMs)
+        signal: AbortSignal.timeout(attemptMs)
       });
 
       const text = await res.text();

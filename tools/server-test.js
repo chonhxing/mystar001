@@ -367,6 +367,60 @@ function waitFor(url, tries) {
     ok(bad.length === 0, `${cases.length} 种模型输出形态都能正确解析`, bad.join('、'));
   }
 
+  // ------------------------------------------------------------ AI 总预算
+  section('5.6 AI 总预算（重试不能越过它，也不能超过客户端愿意等的时间）');
+  {
+    // 直接给 chat() 塞一个假 fetch：不碰真网络，能把"调了几次、等了多久"量出来
+    const deepseek = require(path.join(__dirname, '..', 'server', 'deepseek.js'));
+    const realFetch = global.fetch;
+    let calls = 0;
+
+    const stubFetch = (mode) => {
+      calls = 0;
+      global.fetch = (url, init) => {
+        calls += 1;
+        if (mode === 'hang') {
+          // 挂着不回：只有 abort（超时/预算到点）才会让它结束
+          return new Promise((resolve, reject) => {
+            const sig = init && init.signal;
+            if (sig) {
+              sig.addEventListener('abort', () => {
+                const e = new Error('aborted');
+                e.name = 'TimeoutError';
+                reject(e);
+              });
+            }
+          });
+        }
+        // 返回的不是合法 JSON 信封 → deepseek 会判失败并重试（正好用来数次数）
+        return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve('这不是 JSON') });
+      };
+    };
+
+    const MSGS = [{ role: 'user', content: 'hi' }];
+
+    // ① 预算充足：该重试就重试（默认 retries=1 → 最多 2 次）
+    stubFetch('badjson');
+    await deepseek.chat(MSGS, { tag: 'test-budget-ok', budgetMs: 60000 });
+    ok(calls === 2, `预算充足时按 retries 重试（调了 ${calls} 次）`, `期望 2 次，实际 ${calls} 次`);
+
+    // ② 预算到点：不再开第二次（省下的是 40~50 秒和一次真金白银）
+    stubFetch('badjson');
+    const r2 = await deepseek.chat(MSGS, { tag: 'test-budget-tight', budgetMs: 1 });
+    ok(calls === 1, `预算耗尽后不再重试（调了 ${calls} 次）`, `期望 1 次，实际 ${calls} 次`);
+    ok(r2.ok === false, '预算耗尽时明确返回失败（不会假装成功）');
+
+    // ③ 单次超时必须被"剩余预算"压住：默认超时 55 秒，预算 900ms
+    stubFetch('hang');
+    const t3 = Date.now();
+    const r3 = await deepseek.chat(MSGS, { tag: 'test-budget-abort', budgetMs: 900 });
+    const spent = Date.now() - t3;
+    ok(spent < 4000, `单次超时被剩余预算压住（实际等了 ${spent}ms，默认超时是 55 秒）`, `${spent}ms`);
+    ok(r3.ok === false && r3.error === 'TIMEOUT', `返回 TIMEOUT（${r3.error}）`);
+
+    global.fetch = realFetch;
+  }
+
   // ------------------------------------------------------------ 抽签模式
   section('6. 随心抽签模式');
   {
@@ -1045,6 +1099,62 @@ function waitFor(url, tries) {
     const oversized = await post('/api/divinate', { key: 'x'.repeat(5000), dims: { light: 50 } }, t);
     ok(oversized.status === 400 || oversized.status === 200, '超长 key 被处理而不是崩掉',
       String(oversized.status));
+  }
+
+  // ------------------------------------------------------------ 异步解读任务
+  section('异步解读：提交任务 + 轮询（云调用单次超时 15s，同步请求会被截断）');
+  {
+    const token = await freshToken('task');
+    // 换一个 key：避免命中上一条测试留下的缓存（缓存命中会直接返回 done，测不到轮询）
+    const facts = {
+      key: `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      dims: { light: 62, order: 44, bond: 71, passion: 38, fate: 55, mercy: 66, obsession: 49, sacrifice: 58 },
+      signs: { sun: 'leo', moon: 'aries' },
+      mode: 'chart'
+    };
+
+    const submit = await post('/api/divinate/task', facts, token);
+    ok(submit.status === 200 && submit.body && submit.body.ok, '提交任务返回 200');
+    // 这是这条链路存在的意义：提交必须"秒回"，否则云调用 15s 超时还是会截断
+    ok(!!submit.body.jobId, `拿到 jobId（${submit.body.jobId}）`);
+    ok(submit.body.status === 'pending' || submit.body.status === 'done',
+      `提交后状态是 pending 或 done（${submit.body.status}）`);
+
+    let final = null;
+    if (submit.body.status === 'pending') {
+      for (let i = 0; i < 20 && !final; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        const poll = await get(`/api/divinate/task?jobId=${submit.body.jobId}`, token);
+        if (poll.body && poll.body.status !== 'pending') final = poll.body;
+        else await new Promise((r) => setTimeout(r, 150));
+      }
+    } else {
+      final = submit.body;
+    }
+    ok(!!final, '轮询拿到最终状态');
+    ok(final.status === 'done', `任务是 done（${final && final.status}）`);
+    ok(final.source === 'ai', `拿到 AI 文案（source=${final.source}）`);
+    ok(!!final.copy && final.copy.essence.length > 20, '文案完整');
+    ok(final.copy.aiGenerated === true, '标注为 AI 生成（合规要求）');
+    ok(!!final.meta && !!final.meta.quota, '带配额信息');
+    ok(!!final.match && !!final.match.main, '带匹配结果（角色卡要用）');
+
+    // ⚠️ 安全：别人的 jobId 不能读到别人的解读
+    const other = await freshToken('task-other');
+    const stolen = await get(`/api/divinate/task?jobId=${submit.body.jobId}`, other);
+    ok(stolen.status === 404, `别人的 jobId 读不到（${stolen.status}）`);
+    const noToken = await get(`/api/divinate/task?jobId=${submit.body.jobId}`);
+    ok(noToken.status === 404, '不带 token 也读不到');
+
+    // 同一个 key 再来一次 → 命中缓存，直接 done，不用轮询
+    const again = await post('/api/divinate/task', facts, token);
+    ok(again.body && again.body.status === 'done' && again.body.source === 'cache',
+      `同盘再提交直接命中缓存（${again.body && again.body.source}）`);
+
+    // 同步接口必须保留（老客户端、本地开发都在用）
+    const syncFacts = Object.assign({}, facts, { key: `sync-${Date.now()}` });
+    const sync = await post('/api/divinate', syncFacts, token);
+    ok(sync.status === 200 && sync.body.ok && !!sync.body.copy, '同步接口 /api/divinate 仍然可用');
   }
 
   // ------------------------------------------------------------ 云托管持久化

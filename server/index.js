@@ -287,15 +287,54 @@ function serializeMatch(m) {
 
 // ============================================================ 主流程
 
-async function handleDivinate(req, res, body) {
+/**
+ * AI 解读任务（异步版用）。
+ *
+ * ## 为什么需要异步
+ *
+ * 微信云托管的**云调用（wx.cloud.callContainer）单次超时上限是 15 秒**，
+ * 而一次解读实测要 9~14 秒（flash 模型），慢的时候会越过 15 秒 —— 同步接口
+ * 在云调用下随时可能被截断，所以拆成「提交任务 → 轮询结果」：
+ * 每次请求都是秒级返回，AI 在服务端后台跑，客户端按秒问进度。
+ *
+ * ## 任务存在内存里
+ *
+ * 单实例（我们本来就只能单副本，见 server/store-mysql.js），轮询请求本身会让实例保持热，
+ * 所以放内存够用；3 分钟过期，最多留 200 个。
+ * ⚠️ **必须校验 owner**：否则拿到别人的 jobId 就能读到别人的解读。
+ */
+const jobs = new Map();
+const JOB_TTL_MS = 3 * 60 * 1000;
+const JOB_MAX = 200;
+
+function newJob(owner) {
+  const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+  const now = Date.now();
+  jobs.forEach((j, k) => {
+    if (now - j.at > JOB_TTL_MS) jobs.delete(k);
+  });
+  while (jobs.size >= JOB_MAX) {
+    const oldest = jobs.keys().next().value;
+    jobs.delete(oldest);
+  }
+  const job = { id, owner, status: 'pending', at: now, payload: null, message: '' };
+  jobs.set(id, job);
+  return job;
+}
+
+/**
+ * 前半段：校验 + 缓存 + 配额 + 本地命盘。同步版与异步版共用。
+ * @returns {{error:[number,object]}} 或 {{prep:object}}
+ */
+function prepareDivinate(req, body) {
   const ip = clientIp(req);
   const owner = wxauth.ownerOf(req, (req.headers.authorization || '').replace(/^Bearer\s+/i, ''));
 
   if (!body || typeof body !== 'object') {
-    return sendJson(res, 400, { ok: false, error: 'BAD_BODY' });
+    return { error: [400, { ok: false, error: 'BAD_BODY' }] };
   }
   if (!body.dims || !body.key || typeof body.key !== 'string' || body.key.length < 6) {
-    return sendJson(res, 400, { ok: false, error: 'MISSING_FIELDS', message: 'key 和 dims 必填' });
+    return { error: [400, { ok: false, error: 'MISSING_FIELDS', message: 'key 和 dims 必填' }] };
   }
 
   const cacheKey = `p:${hash(body.key.slice(0, 64))}`;
@@ -305,31 +344,49 @@ async function handleDivinate(req, res, body) {
   // 缓存命中：不花 AI 的钱，但仍然占配额（防止无限刷）
   if (cached) {
     const q = ratelimit.consumeCached(store, owner, ip);
-    if (!q.ok) return quotaError(res, q);
+    if (!q.ok) return { error: quotaErrorPayload(q) };
     store.bumpStat('cached');
-    return sendJson(res, 200, {
-      ok: true,
-      source: 'cache',
-      copy: cached,
-      meta: metaPayload(q)
-    });
+    return { prep: { owner, cacheKey, cached, meta: metaPayload(q) } };
   }
 
   const q = ratelimit.consume(store, owner, ip);
-  if (!q.ok) return quotaError(res, q);
+  if (!q.ok) return { error: quotaErrorPayload(q) };
 
   let chart;
   try {
     chart = rebuildChart(body);
   } catch (e) {
-    return sendJson(res, 400, { ok: false, error: 'BAD_FACTS', message: e.message });
+    return { error: [400, { ok: false, error: 'BAD_FACTS', message: e.message }] };
   }
 
   const match = matcher.match(chart);
   const fortune = resolveFortune(body, chart);
   const localCopy = copywriter.build(chart, match, fortune);
 
-  const ctx = { chart, match, fortune };
+  return {
+    prep: {
+      owner,
+      cacheKey,
+      cached: null,
+      meta: metaPayload(q),
+      chart,
+      match,
+      fortune,
+      localCopy,
+      body
+    }
+  };
+}
+
+/**
+ * 后半段：真的去问 AI，把结果整理成可下发的文案。AI 没配/失败就退回本地文案。
+ *
+ * @param {object} p prepareDivinate 的产物
+ * @param {object} [opts] { budgetMs } —— 这次最多花多久在 AI 上
+ */
+async function runAiCopy(p, opts) {
+  const { chart, match, fortune, localCopy } = p;
+  const o = opts || {};
   let copy = Object.assign({}, localCopy, { aiGenerated: false });
   let source = 'local';
 
@@ -340,8 +397,8 @@ async function handleDivinate(req, res, body) {
     const usePicker = CONFIG.ai.aiPicksCharacter;
 
     const res2 = await deepseek.chat(
-      usePicker ? prompts.buildPickerMessages(ctx, candidates) : prompts.buildMessages(ctx),
-      { tag: 'divinate', maxTokens: CONFIG.ai.maxTokens }
+      usePicker ? prompts.buildPickerMessages({ chart, match, fortune }, candidates) : prompts.buildMessages({ chart, match, fortune }),
+      { tag: 'divinate', maxTokens: CONFIG.ai.maxTokens, budgetMs: o.budgetMs }
     );
 
     if (res2.ok) {
@@ -378,17 +435,100 @@ async function handleDivinate(req, res, body) {
 
   // 只有真的是 AI 写的（或完整的模板）才进缓存，跑偏的结果不缓存
   if (source === 'ai' || !aiReady()) {
-    store.setProse(cacheKey, copy);
+    store.setProse(p.cacheKey, copy);
   }
 
-  return sendJson(res, 200, {
+  return { copy, source, match, fortune };
+}
+
+/** 组装下发体（同步版与异版本的"完成"状态用的是同一份） */
+function divinatePayload(p, out) {
+  return {
     ok: true,
-    source,
-    match: serializeMatch(match),
-    copy,
-    fortune: { date: fortune.date, level: fortune.levelName, stars: fortune.stars },
-    meta: metaPayload(q)
-  });
+    source: out.source,
+    match: serializeMatch(out.match),
+    copy: out.copy,
+    fortune: { date: out.fortune.date, level: out.fortune.levelName, stars: out.fortune.stars },
+    meta: p.meta
+  };
+}
+
+/**
+ * 同步版：本地开发、以及老客户端用。等 AI 写完再回。
+ *
+ * ⚠️ 这里必须用**更短的预算**（`ai.syncBudgetMs`）：老客户端是拿一次
+ * `wx.request` 等答案的，它自己的超时（`config.API_TIMEOUT`）比总预算短，
+ * 服务端跑满 70 秒的话，客户端早在 50 秒就断开去看本地模板文案了 ——
+ * 那次 AI 调用就是纯浪费。宁可服务端早点认输，也不要做没人等的活。
+ */
+async function handleDivinate(req, res, body) {
+  const r = prepareDivinate(req, body);
+  if (r.error) return sendJson(res, r.error[0], r.error[1]);
+  const p = r.prep;
+
+  if (p.cached) {
+    return sendJson(res, 200, { ok: true, source: 'cache', copy: p.cached, meta: p.meta });
+  }
+
+  const out = await runAiCopy(p, { budgetMs: CONFIG.ai.syncBudgetMs });
+  return sendJson(res, 200, divinatePayload(p, out));
+}
+
+/**
+ * 异步版：立刻返回 jobId，AI 在后台跑。
+ * 云调用（单次 ≤15s）必须用这个，否则解读会被超时截断。
+ */
+async function handleDivinateTask(req, res, body) {
+  const r = prepareDivinate(req, body);
+  if (r.error) return sendJson(res, r.error[0], r.error[1]);
+  const p = r.prep;
+
+  // 缓存命中 / 没配 AI：没有要等的，直接当"已完成"返回，省一次轮询
+  if (p.cached) {
+    return sendJson(res, 200, { ok: true, status: 'done', source: 'cache', copy: p.cached, meta: p.meta });
+  }
+  if (!aiReady()) {
+    return sendJson(res, 200, {
+      ok: true,
+      status: 'done',
+      source: 'local',
+      copy: Object.assign({}, p.localCopy, { aiGenerated: false }),
+      meta: p.meta
+    });
+  }
+
+  const job = newJob(p.owner);
+  // ⚠️ 刻意不 await：请求要立刻返回，客户端靠轮询拿结果
+  runAiCopy(p)
+    .then((out) => {
+      job.payload = divinatePayload(p, out);
+      job.status = 'done';
+    })
+    .catch((e) => {
+      job.status = 'failed';
+      job.message = (e && e.message) || 'AI 解读失败';
+      store.bumpStat('failed');
+    });
+
+  return sendJson(res, 200, { ok: true, status: 'pending', jobId: job.id, meta: p.meta });
+}
+
+/** 轮询结果。⚠️ owner 必须对上，否则拿到别人的 jobId 就能读到别人的解读。 */
+function handleDivinateResult(req, res) {
+  const url = new URL(req.url, 'http://local');
+  const owner = wxauth.ownerOf(req, (req.headers.authorization || '').replace(/^Bearer\s+/i, ''));
+  const id = url.searchParams.get('jobId') || '';
+  const job = id ? jobs.get(id) : null;
+  if (!job || job.owner !== owner) {
+    return sendJson(res, 404, { ok: false, error: 'JOB_NOT_FOUND', message: '这次解读已经过期，重新来一次吧' });
+  }
+  if (job.status === 'pending') {
+    return sendJson(res, 200, { ok: true, status: 'pending' });
+  }
+  if (job.status === 'failed') {
+    return sendJson(res, 200, { ok: true, status: 'failed', message: job.message });
+  }
+  return sendJson(res, 200, Object.assign({ status: 'done' }, job.payload));
 }
 
 function metaPayload(q) {
@@ -399,19 +539,20 @@ function metaPayload(q) {
   };
 }
 
-function quotaError(res, q) {
+/** 配额错误 → [HTTP 状态, 响应体]。同步 / 异步两条路共用，别各写一份。 */
+function quotaErrorPayload(q) {
   const map = {
     TOO_FAST: [429, '请求太快了，歇一会儿再占'],
     DAILY_USER_LIMIT: [429, `今天的占卜次数用完了（${q.limit} 次），明天再来`],
     DAILY_GLOBAL_LIMIT: [503, '今天的星象额度已满，明天再来']
   };
   const row = map[q.reason] || [429, '暂时无法占卜'];
-  return sendJson(res, row[0], {
-    ok: false,
-    error: q.reason,
-    message: row[1],
-    meta: metaPayload(q)
-  });
+  return [row[0], { ok: false, error: q.reason, message: row[1], meta: metaPayload(q) }];
+}
+
+function quotaError(res, q) {
+  const row = quotaErrorPayload(q);
+  return sendJson(res, row[0], row[1]);
 }
 
 // ============================================================ 路由
@@ -488,6 +629,15 @@ const ROUTES = {
   // 占卜主接口（本机算命盘 + 后端 AI 解读）。这个条目一度被我误删过，
   // 加回时顺手在测试里补断言，避免再丢。
   'POST /api/divinate': handleDivinate,
+  /**
+   * 异步版：立刻返回 jobId，AI 在后台跑，客户端轮询下面的接口拿结果。
+   *
+   * 为什么必须有它：微信云托管的**云调用单次超时上限 15 秒**，
+   * 而解读要 16~37 秒 —— 走同步接口必然被截断（AI 文案永远拿不到）。
+   * 客户端优先走这两个接口，服务端没有它们时会自动退回同步版（见 services/api.js）。
+   */
+  'POST /api/divinate/task': handleDivinateTask,
+  'GET /api/divinate/task': handleDivinateResult,
 
   'POST /api/pay/sign': async (req, res, body) => {
     if (!pay.isConfigured()) {

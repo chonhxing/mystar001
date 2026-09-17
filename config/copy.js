@@ -202,7 +202,8 @@ const UI = {
     '我们不会获取你的昵称、头像或手机号。所有内容仅供娱乐。',
 
   // 解锁（免费次数用完之后）
-  unlockTitle: '今天的免费次数用完了',
+  // ⚠️ 别说"今天" —— 免费次数是一次性的，代码里没有任何按天重置逻辑
+  unlockTitle: '免费次数用完了',
   unlockFreeDone: '免费 {n} 次已经用完',
   unlockByAd: '看广告 · 解锁 1 次',
   unlockOrBuy: '或 开通畅玩卡',
@@ -215,6 +216,7 @@ const UI = {
   unlockPaying: '正在拉起支付…',
   unlockChecking: '正在确认…',
   unlockAdFail: '广告没看完，再试一次吧',
+  unlockAdNotOpen: '广告位暂未开放，这次先送你一次',
   unlockAdNone: '暂时没有可用的广告，稍后再试',
   unlockPaidOk: '畅玩卡已到账，{days} 天内不限次',
   unlockPaidPending: '支付已受理，权益稍后到账',

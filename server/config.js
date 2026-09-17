@@ -31,12 +31,45 @@ const CONFIG = {
   ai: {
     apiKey: str('DEEPSEEK_API_KEY', ''),
     baseUrl: str('DEEPSEEK_BASE_URL', 'https://api.deepseek.com'),
-    // ⚠️ DeepSeek 接口只认 deepseek-flash / deepseek-v4-pro（旧的 deepseek-chat /
-    //    deepseek-reasoner 作为别名仍可用，但 deepseek-v4.1 这类名字会被 400 拒绝）。
-    //    这两个都是**推理模型**：会先产出 reasoning_tokens 再给正文，
-    //    所以 maxTokens 必须同时覆盖"思考 + 五段文案"，否则 JSON 会被截断。
-    model: str('DEEPSEEK_MODEL', 'deepseek-v4-pro'),
-    timeoutMs: num('DEEPSEEK_TIMEOUT_MS', 55000),
+    /**
+     * ⚠️ 接口只认 `deepseek-flash` / `deepseek-v4-pro`（旧的 deepseek-chat /
+     *    deepseek-reasoner 作为别名仍可用，但 deepseek-v4.1 这类名字会被 400 拒绝）。
+     *
+     * **默认用 flash，这是实测选出来的**（tools/probe-model.js 可以随时复现）：
+     *
+     * | 模型 | 一次解读耗时 | 输出 token（其中思考） | 备注 |
+     * | --- | --- | --- | --- |
+     * | deepseek-flash | 8.7 / 12.2 / 13.6s | 1500~2200（思考 1000~1750） | 文案质量够用，偶有更好的句子 |
+     * | deepseek-v4-pro | 50s（另一次被 max_tokens 截断） | 3336（思考 2933） | 慢 4 倍、贵，还更容易超时 |
+     *
+     * 两个都是**推理模型**（先产出 reasoning_tokens 再写正文），
+     * 所以 `maxTokens` 必须同时覆盖"思考 + 五段文案"，给小了 JSON 会被截断。
+     * 想换回 pro：`DEEPSEEK_MODEL=deepseek-v4-pro`，但要同时把下面几个预算放大。
+     */
+    model: str('DEEPSEEK_MODEL', 'deepseek-flash'),
+    /**
+     * 单次尝试的超时。flash 实测 9~14 秒，45 秒是 3 倍余量。
+     * 给一次尝试足够的量，比"卡在临界限 + 一堆无用重试"更容易把文案拿到手；
+     * 重试留给"秒级失败"（5xx / 返回坏 JSON），那才是重试真正有用的场景。
+     */
+    timeoutMs: num('DEEPSEEK_TIMEOUT_MS', 45000),
+    /**
+     * **整次调用的总预算**（含重试），不是单次超时。
+     *
+     * 它必须**小于**客户端愿意等的时间（`config.DIVINATE_WAIT_MS`，65 秒），
+     * 否则用户已经在看本地模板文案了，服务端还在为一个没人等的请求烧钱。
+     * 改其中任何一个都要同步看另一个 —— tools/check-structure.js 里有断言盯着。
+     */
+    budgetMs: num('DEEPSEEK_BUDGET_MS', 50000),
+    /**
+     * **同步接口**（`POST /api/divinate`）用的预算，比上面那个更短。
+     *
+     * 老客户端是拿一次 `wx.request` 等答案的，它自己的超时是
+     * `config.API_TIMEOUT`（50 秒）。服务端要是跑满 50 秒，客户端早就断开去
+     * 看本地模板文案了 —— 这一次 AI 调用纯浪费。所以同步版宁可早点认输。
+     * 新客户端走的是异步任务 + 轮询，用满 `budgetMs` 也没关系。
+     */
+    syncBudgetMs: num('DEEPSEEK_SYNC_BUDGET_MS', 35000),
     maxTokens: num('DEEPSEEK_MAX_TOKENS', 4000),
     // 推理模型对 temperature 未必买账（不支持时接口会忽略），留着不碍事
     temperature: num('DEEPSEEK_TEMPERATURE', 1.1),

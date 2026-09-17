@@ -276,6 +276,35 @@ section('5. 关键约定与合规');
   ok(typeof CONFIG.ENABLE_ART === 'boolean', `美术开关 ENABLE_ART = ${CONFIG.ENABLE_ART}`);
   ok(typeof CONFIG.ADS.ENABLED === 'boolean', `广告开关 ADS.ENABLED = ${CONFIG.ADS.ENABLED}（没配广告位时静默跳过）`);
 
+  /**
+   * 客户端等 AI 的时间必须**大于**服务端自己的总预算。
+   *
+   * 反了会出这种错位：客户端等不及先显示了本地模板文案，几秒后服务端才把 AI
+   * 文案算好并缓存 —— 用户白看一版降级内容，我们照样付了 AI 的钱（一次约 3 分）。
+   * 两个值分别在 config/index.js 和 server/config.js，改一个很容易忘了另一个，
+   * 所以在这里钉死。
+   */
+  const serverConfig = require(path.join(ROOT, 'server/config.js'));
+  const waitMs = CONFIG.DIVINATE_WAIT_MS;
+  const budgetMs = serverConfig.CONFIG.ai.budgetMs;
+  const syncBudgetMs = serverConfig.CONFIG.ai.syncBudgetMs;
+  const margin = 5000; // 留一点网络往返 + 服务端收尾的余量
+  // 提示只在失败时给（成功时给一句"后果说明"反而看不懂）
+  const waitOk = Number.isFinite(waitMs) && Number.isFinite(budgetMs) && waitMs >= budgetMs + margin;
+  ok(
+    waitOk,
+    `客户端等 AI 的时限 ${waitMs}ms 大于服务端总预算 ${budgetMs}ms（留 ${margin}ms 余量）`,
+    waitOk ? '' : '服务端比客户端还晚收手：用户先看到降级文案，AI 那笔钱却照付'
+  );
+  // 同步接口是"一次请求等到底"，服务端必须比客户端那次请求的超时早收手
+  const syncOk = Number.isFinite(syncBudgetMs) && Number.isFinite(CONFIG.API_TIMEOUT) &&
+    syncBudgetMs + margin <= CONFIG.API_TIMEOUT;
+  ok(
+    syncOk,
+    `同步接口预算 ${syncBudgetMs}ms 小于客户端单次请求超时 ${CONFIG.API_TIMEOUT}ms`,
+    syncOk ? '' : '同步版比客户端超时还晚收手：客户端断线后服务端还在跑 AI（白花钱）'
+  );
+
   const art = require(path.join(ROOT, 'utils/art.js'));
   ok(!!art.resolveArt({ id: 'naruto', name: '漩涡鸣人', rarity: 'epic' }).glyph, '美术未就位时占位渲染可用');
 

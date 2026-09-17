@@ -77,6 +77,7 @@ function start() {
   setupDebugPanel();
   stage.start();
   healDeviceInfo();
+  restoreEntitlement();
 
   const bootMs = Date.now() - bootAt;
   // 启动耗时关系到留存：官方数据是"4 秒内看到首屏可以减少约 30~40% 流失"。
@@ -168,6 +169,31 @@ function setupDebugPanel() {
   } catch (e) {
     /* 拿不到环境信息就算了，不能因为调试面板影响启动 */
   }
+}
+
+/**
+ * 启动时把付费权益从服务端找回来。
+ *
+ * 付费权益以服务端为准（我们自己的本地只是缓存）：用户换设备 / 重装微信之后，
+ * 如果不主动拉一次，主界面就会显示"免费次数还剩 2 次"，
+ * 而他其实是刚买过 30 天畅玩卡的人。异步、不阻塞首屏；拿到变化才刷新当前页。
+ *
+ * `payment.syncFromServer()` 内部已判断 `PAY.ENABLED`，没开付费时不发请求。
+ */
+function restoreEntitlement() {
+  if (!CONFIG.PAY || !CONFIG.PAY.ENABLED) return;
+  // eslint-disable-next-line global-require
+  const payment = require('../../services/payment.js');
+  payment
+    .syncFromServer()
+    .then((r) => {
+      if (r && r.ok && r.changed && router && router.current() && router.current().onResume) {
+        router.current().onResume();
+      }
+    })
+    .catch(() => {
+      /* 拉不到就继续用本地缓存，不能因为这次失败影响游玩 */
+    });
 }
 
 function bindLifecycle() {

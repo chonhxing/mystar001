@@ -76,6 +76,23 @@ class RechargeScene extends Scene {
     this.alwaysRender = true;
     this.build();
     this.probePay();
+    this.restorePass();
+  }
+
+  /**
+   * 从服务端把已购的畅玩卡找回来。
+   *
+   * ⚠️ 这一步以前漏了：`payment.syncFromServer()` 写好了却**没有任何地方调用**。
+   * 后果是换设备 / 重装微信之后，用户花 100 元买的 30 天卡在本地没有了、
+   * 服务端明明存着却没人去取 —— 这会变成投诉和退款申请。
+   *
+   * 它内部已经判断 `PAY.ENABLED`，没开付费时不会发请求。
+   */
+  restorePass() {
+    payment.syncFromServer().then((r) => {
+      // 只有"确实恢复到了东西"、并且自己还在台前时才重建页面
+      if (r && r.ok && r.changed && this.stage.router.current() === this) this.build();
+    });
   }
 
   /**
@@ -249,23 +266,24 @@ class RechargeScene extends Scene {
     this.build();
   }
 
+  /**
+   * 看广告换一次解锁。
+   *
+   * ⚠️ 策略（有没有广告位、没广告位时给不给）全在 reward.unlockByAd 里 ——
+   *    这一页以前自己写了一份没广告位就直接发放，和解锁面板那份重复，
+   *    结果改了一边忘另一边（两处都在白送）。现在只留统一策略，这里只管 UI。
+   */
   doAd() {
     if (this.busy) return;
-    if (!reward.isAvailable()) {
-      // 没配广告位（开发期）：直接给一次，不让流程卡死
-      entitlement.grantTickets(1);
-      this.toast(copy.UI.rechargeAdOk);
-      this.build();
-      return;
-    }
-    this.setBusy(copy.UI.unlockAdPlaying);
-    reward.showRewarded('divinate_again').then((ok) => {
+    const hasAd = reward.isAvailable();
+    if (hasAd) this.setBusy(copy.UI.unlockAdPlaying);
+    reward.unlockByAd().then((r) => {
       this.setBusy('');
-      if (ok) {
+      if (r.granted) {
         entitlement.grantTickets(1);
-        this.toast(copy.UI.rechargeAdOk);
+        this.toast(r.reason === 'AD_NOT_OPEN_GRANTED' ? copy.UI.unlockAdNotOpen : copy.UI.rechargeAdOk);
       } else {
-        this.toast(copy.UI.rechargeAdFail);
+        this.toast(r.reason === 'AD_NOT_OPEN' ? copy.UI.unlockAdNotOpen : copy.UI.unlockAdFail);
       }
       this.build();
     });

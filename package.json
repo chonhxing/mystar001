@@ -17,7 +17,8 @@
     "test:ai": "node tools/server-test.js",
     "test:scroll": "node tools/diag-scroll.js",
     "icon": "node tools/make-icon.js",
-    "icon:check": "node tools/preview-icon.js"
+    "icon:check": "node tools/preview-icon.js",
+    "probe:model": "node --env-file=server/.env tools/probe-model.js"
   },
   "engines": {
     "node": ">=20.6.0"

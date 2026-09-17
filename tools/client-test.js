@@ -324,6 +324,14 @@ async function waitFor(fn, timeoutMs, stepMs) {
   ok(revealed, '结果页揭幕');
   ok(Date.now() - t0 >= 50, '仪式动画至少播了设定的时长', `${Date.now() - t0}ms`);
   ok(result.data.ready, '视图模型构建完成');
+  // AI 文案是"后到"的：客户端先提交任务、再轮询（云托管云调用单次超时 15s，
+  // 同步请求会被截断，所以解读必须拆成两个秒级请求）。这里等它补上来。
+  const aiArrived = await waitFor(
+    () => result.data.copy && result.data.copy.essence === AI_PROSE.essence,
+    8000,
+    60
+  );
+  ok(aiArrived, 'AI 文案异步补上（任务 + 轮询）');
 
   ok(!!result.data.main && !!result.data.main.char.name,
     `主推角色渲染出来（${result.data.main && result.data.main.char.name}）`);

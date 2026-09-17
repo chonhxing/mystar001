@@ -53,17 +53,37 @@ function post(pathname, body, token) {
   });
 }
 
-function get(pathname) {
+/**
+ * GET。token 可选但**轮询时必须带上**：服务端按 owner 校验 jobId，
+ * 不带 token 会被当成"别人的任务"一律 404（这是防越权读解读的设计，
+ * 不是 bug —— 客户端 services/api.js 的每个请求都自带 Authorization）。
+ */
+function get(pathname, token) {
   return new Promise((resolve, reject) => {
-    http
-      .get({ host: '127.0.0.1', port: PORT, path: pathname }, (res) => {
+    const req = http.get(
+      {
+        host: '127.0.0.1',
+        port: PORT,
+        path: pathname,
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      },
+      (res) => {
         let raw = '';
         res.on('data', (c) => {
           raw += c;
         });
-        res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(raw) }));
-      })
-      .on('error', reject);
+        res.on('end', () => {
+          let json = null;
+          try {
+            json = JSON.parse(raw);
+          } catch (e) {
+            json = { _raw: raw };
+          }
+          resolve({ status: res.statusCode, body: json });
+        });
+      }
+    );
+    req.on('error', reject);
   });
 }
 
@@ -84,6 +104,47 @@ function waitReady(tries) {
     };
     tick();
   });
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * 走**异步任务 + 轮询**（真机上云调用用的就是这条，客户端也是优先走它）。
+ *
+ * 为什么默认不用同步接口：同步接口的预算（`ai.syncBudgetMs`）刻意压在
+ * 客户端单次请求超时之下，实测要 45~50 秒的解读会被它主动放弃 ——
+ * 那是为了"老客户端断线后别再烧钱"，不是我们想在这个测试里看到的链路。
+ * 想专门验同步版（老客户端兼容）就加 LIVE_SYNC=1。
+ *
+ * @returns {{status:number, body:object, elapsed:number, polls:number}}
+ */
+async function divinateViaTask(facts, token, deadlineMs) {
+  const t0 = Date.now();
+  const submit = await post('/api/divinate/task', facts, token);
+  if (!submit.body.ok) return { status: submit.status, body: submit.body, elapsed: Date.now() - t0, polls: 0 };
+
+  // 服务端可能直接给答案（命中缓存 / 没配 AI）
+  if (submit.body.status === 'done') {
+    return { status: 200, body: submit.body, elapsed: Date.now() - t0, polls: 0 };
+  }
+
+  const jobId = submit.body.jobId;
+  let polls = 0;
+  while (Date.now() - t0 < deadlineMs) {
+    await sleep(polls === 0 ? 600 : 1500);
+    polls += 1;
+    /* eslint-disable no-await-in-loop */
+    const poll = await get(`/api/divinate/task?jobId=${encodeURIComponent(jobId)}`, token);
+    if (poll.body && poll.body.status === 'done') {
+      return { status: 200, body: poll.body, elapsed: Date.now() - t0, polls };
+    }
+    if (poll.body && poll.body.status === 'failed') {
+      return { status: 200, body: poll.body, elapsed: Date.now() - t0, polls };
+    }
+  }
+  return { status: 200, body: { ok: false, error: 'TIMEOUT' }, elapsed: Date.now() - t0, polls };
 }
 
 (async function main() {
@@ -139,9 +200,22 @@ function waitReady(tries) {
   console.log(`\n=== 上行数据（${Buffer.byteLength(JSON.stringify(facts))} 字节）===`);
   console.log(`  ${JSON.stringify(facts).slice(0, 220)}...`);
 
-  console.log('\n=== 请求 AI 解读（推理模型，可能要等十几秒）… ===');
+  const useSync = process.env.LIVE_SYNC === '1';
+  console.log(
+    useSync
+      ? '\n=== 请求 AI 解读（同步接口，LIVE_SYNC=1；推理模型要等十几秒）… ==='
+      : '\n=== 请求 AI 解读（提交任务 + 轮询，和真机同一路径；推理模型要等十几秒）… ==='
+  );
   const t0 = Date.now();
-  const res = await post('/api/divinate', facts, token);
+  let res;
+  let polls = 0;
+  if (useSync) {
+    res = await post('/api/divinate', facts, token);
+  } else {
+    const r = await divinateViaTask(facts, token, Number(process.env.LIVE_WAIT_MS || 90000));
+    res = { status: r.status, body: r.body };
+    polls = r.polls;
+  }
   const cost = Date.now() - t0;
 
   if (!res.body.ok) {
@@ -150,7 +224,10 @@ function waitReady(tries) {
     process.exit(1);
   }
 
-  console.log(`  ✓ 耗时 ${(cost / 1000).toFixed(1)}s ｜ source=${res.body.source}`);
+  console.log(
+    `  ✓ 耗时 ${(cost / 1000).toFixed(1)}s ｜ source=${res.body.source}` +
+      (useSync ? '' : ` ｜ 轮询 ${polls} 次`)
+  );
   console.log(`  服务端匹配的主推：${res.body.match.main.id}（共振 ${res.body.match.main.resonance}%）`);
 
   const copy = res.body.copy;
@@ -180,9 +257,10 @@ function waitReady(tries) {
   const est = st.tokensIn * inPrice + st.tokensOut * outPrice;
   console.log(`  粗算花费 ≈ ¥${est.toFixed(4)}（单次约 ¥${(est / Math.max(1, st.calls)).toFixed(4)}，请以 DeepSeek 官网定价为准）`);
 
-  const again = await post('/api/divinate', facts, token);
+  const again = await post('/api/divinate/task', facts, token);
   console.log(`\n=== 再发一次同样的请求 ===`);
   console.log(`  source=${again.body.source}（cache 说明命中了缓存，没花第二次钱）`);
+  console.log(`  客户端拿到的轮询结果：status=${again.body.status || '-'}`);
 
   app.server.close();
   setTimeout(() => process.exit(0), 150);

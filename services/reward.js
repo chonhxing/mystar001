@@ -87,4 +87,33 @@ function showRewarded(slot) {
   });
 }
 
-module.exports = { showRewarded, isAvailable, unitOf };
+/**
+ * 「看一次广告换一次解锁」的**完整策略**。
+ *
+ * ⚠️ 只能有这一处。以前解锁面板和充值页各写了一份，结果是：
+ *   · 两边行为可能不一致（改了一边忘了另一边）
+ *   · "广告位没配时直接发放"这个兜底被复制成两份，等于两处都在白送
+ * 现在策略收敛在这里，调用方只管 UI（提示 + 发券 + 关面板）。
+ *
+ * @returns {Promise<{ok:boolean, granted:boolean, reason:string}>}
+ *   reason: 'ad'                   真的看完广告了
+ *           'AD_INCOMPLETE'        广告没看完
+ *           'AD_NOT_OPEN_GRANTED'  广告位还没开放，按配置照发一次
+ *           'AD_NOT_OPEN'          广告位还没开放，且配置成不发放
+ */
+function unlockByAd() {
+  if (isAvailable()) {
+    return showRewarded('divinate_again').then((ok) => ({
+      ok: !!ok,
+      granted: !!ok,
+      reason: ok ? 'ad' : 'AD_INCOMPLETE'
+    }));
+  }
+  analytics.report(analytics.REPORTABLE.AD_FAILED, { reason: 'UNAVAILABLE' });
+  if (CONFIG.ADS.GRANT_WHEN_UNAVAILABLE === false) {
+    return Promise.resolve({ ok: false, granted: false, reason: 'AD_NOT_OPEN' });
+  }
+  return Promise.resolve({ ok: true, granted: true, reason: 'AD_NOT_OPEN_GRANTED' });
+}
+
+module.exports = { showRewarded, isAvailable, unlockByAd, unitOf };

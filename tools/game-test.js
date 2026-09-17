@@ -1924,11 +1924,28 @@ let stageRef = null;
     ok(!find(rc.root, (w) => w.constructor.name === 'PriceCell'), '支付未开通时不显示价格档位');
     ok(blob.indexOf(copy.UI.rechargeUnavailable) >= 0, '给一句"暂未开放"的说明');
 
-    // 点看广告（开发期没广告位 → 直接给一次）
+    // 点看广告（开发期没广告位 → 按配置发放，但要如实提示"广告位暂未开放"）
     tapWidget(find(rc.root, (w) => w.text === copy.UI.rechargeAdBtn));
     await sleep(80);
     ok(ent.readState().adTickets === 1 || ent.summary().freeLeft === 2,
       '看广告拿到一次解锁（开发期直接发放）');
+    {
+      const texts = stage.canvas._ops.filter((o) => o[0] === 'text').map((o) => String(o[1])).join('|');
+      ok(texts.indexOf(copy.UI.unlockAdNotOpen) >= 0,
+        '没配广告位时如实说"广告位暂未开放"，而不是假装放了广告');
+      ok(CONFIG.ADS.GRANT_WHEN_UNAVAILABLE !== undefined,
+        '这个行为是可配置的（GRANT_WHEN_UNAVAILABLE）');
+    }
+    {
+      // 关掉开关后就不该再白送
+      ent.reset();
+      const before = ent.readState().adTickets;
+      CONFIG.ADS.GRANT_WHEN_UNAVAILABLE = false;
+      tapWidget(find(rc.root, (w) => w.text === copy.UI.rechargeAdBtn));
+      await sleep(80);
+      ok(ent.readState().adTickets === before, '关掉开关后没广告就不发放（不白送）');
+      CONFIG.ADS.GRANT_WHEN_UNAVAILABLE = true;
+    }
 
     // 开通支付后：档位出现，且要两步（先选档位再开通）
     ent.reset();

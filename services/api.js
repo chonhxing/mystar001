@@ -227,6 +227,103 @@ function ensureSession(force) {
 }
 
 /**
+ * 「提交任务 + 轮询」版的解读。
+ *
+ * 为什么需要：微信云托管的云调用单次超时上限 15s，而解读要 16~37s。
+ * 提交后服务端在后台跑 AI，客户端每 1.5 秒问一次，最多问 API_TIMEOUT 那么久。
+ *
+ * @returns {Promise<object|null>} 成功/降级都返回结果对象；**服务端没有这个接口时返回 null**
+ *   （null 表示"你走同步那条路吧"）
+ */
+const TASK_POLL_MS = 1500;
+
+async function divinateByTask(facts, localResult) {
+  const submit = await request('/api/divinate/task', { method: 'POST', data: facts, timeout: 12000 });
+
+  // 老服务端：没有这个接口 → 交给调用方走同步版
+  if (!submit.ok && (submit.status === 404 || submit.status === 405)) return null;
+
+  if (!submit.ok) {
+    // 配额类错误：把后端那句人话原样透给用户（和同步版一个口径）
+    if (submit.status === 429 || submit.status === 503) {
+      return {
+        result: localResult,
+        source: 'local',
+        limited: true,
+        quota: submit.body && submit.body.meta ? submit.body.meta.quota : null,
+        notice: submit.message || payload.localNotice('QUOTA'),
+        reason: (submit.body && submit.body.error) || 'QUOTA'
+      };
+    }
+    return {
+      result: localResult,
+      source: 'local',
+      notice: payload.localNotice(submit.reason),
+      reason: submit.reason
+    };
+  }
+
+  const body = submit.body || {};
+  // 服务端已经把答案给我们了（命中了缓存 / 没配 AI）：不用轮询
+  if (body.status === 'done') return mergeDivinate(localResult, body);
+
+  const jobId = body.jobId;
+  if (!jobId) return null; // 形状不对，退回同步版更稳
+
+  // 总共愿意等多久。⚠️ 必须大于服务端的总预算（server/config.js 的 ai.budgetMs），
+  // 否则会出现"客户端已经降级、服务端刚把 AI 文案算完"的错位：
+  // 用户白看一版模板文案，我们还照样付了 AI 的钱。见 config/index.js 的注释。
+  const deadline = Date.now() + (CONFIG.DIVINATE_WAIT_MS || 80000);
+  // 首次问得快一点（600ms）：多数情况 AI 几百毫秒就写完了，
+  // 固定等 1.5 秒会让用户白等一秒多。之后按 TASK_POLL_MS 的节奏问。
+  let wait = 600;
+  while (Date.now() < deadline) {
+    await sleep(wait);
+    wait = TASK_POLL_MS;
+    // eslint-disable-next-line no-await-in-loop
+    const poll = await request(`/api/divinate/task?jobId=${encodeURIComponent(jobId)}`, { timeout: 8000 });
+    if (poll.ok && poll.body) {
+      if (poll.body.status === 'done') return mergeDivinate(localResult, poll.body);
+      if (poll.body.status === 'failed') {
+        return {
+          result: localResult,
+          source: 'local',
+          notice: payload.localNotice('AI_FAILED'),
+          reason: 'AI_FAILED'
+        };
+      }
+    } else if (poll.status === 404 || poll.status === 401) {
+      // 任务找不到（实例被回收）或登录态丢了：别再空转
+      break;
+    }
+  }
+
+  return {
+    result: localResult,
+    source: 'local',
+    notice: payload.localNotice('TIMEOUT'),
+    reason: 'TIMEOUT'
+  };
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** 服务端返回体 → 客户端统一的结果对象（同步版与任务版共用，口径必须一致） */
+function mergeDivinate(localResult, body) {
+  const merged = payload.applyServerResponse(localResult, body);
+  return {
+    result: merged.result,
+    source: body.source || 'ai',
+    applied: merged.applied,
+    quota: body.meta ? body.meta.quota : null,
+    notice: null,
+    reason: merged.applied.copy ? null : 'AI_FAILED'
+  };
+}
+
+/**
  * 占卜：本地命盘 + 后端 AI 解读。
  *
  * @param {object} localResult core.divinate() 的本地结果（永远是完整的）
@@ -259,6 +356,17 @@ async function divinate(localResult, opts) {
   keepScreenOn(true);
   let res;
   try {
+    /**
+     * 优先走「提交任务 + 轮询」。
+     *
+     * 为什么不是一次请求：微信云托管的**云调用单次超时上限 15 秒**，
+     * 而解读要 16~37 秒 —— 同步接口在真机上会被截断，AI 文案永远拿不到。
+     * 拆成两个秒级请求就没这个问题了。
+     *
+     * 服务端还没升级时（新接口 404），自动退回同步请求，两边可以独立升级。
+     */
+    const viaTask = await divinateByTask(facts, localResult);
+    if (viaTask) return viaTask;
     res = await request('/api/divinate', {
       method: 'POST',
       data: facts,
@@ -292,15 +400,8 @@ async function divinate(localResult, opts) {
     };
   }
 
-  const merged = payload.applyServerResponse(localResult, res.body);
-  return {
-    result: merged.result,
-    source: res.body.source || 'ai',
-    applied: merged.applied,
-    quota: res.body.meta ? res.body.meta.quota : null,
-    notice: null,
-    reason: merged.applied.copy ? null : 'AI_FAILED'
-  };
+  // 同步版（老服务端 / 任务接口不可用）的收尾也走同一个 merge，口径不会漂
+  return mergeDivinate(localResult, res.body);
 }
 
 /**
