@@ -307,6 +307,48 @@ const jobs = new Map();
 const JOB_TTL_MS = 3 * 60 * 1000;
 const JOB_MAX = 200;
 
+/**
+ * 出网自检：容器能不能访问外网（出方向）。
+ *
+ * ⚠️ 这一项不开，**AI 和微信登录会同时废掉**，而现象特别容易被误判：
+ *    控制台里"公网访问"是开着的、域名也能打开，只是容器出不去。
+ *    真机上表现为"账号登录不上 + AI 永远出本机模板文案"。
+ * 容器自己不知道能不能出网（只能等调用失败才发现），所以主动探一次，
+ * 结果挂在 /api/health 上 —— 那是个公开接口，出问题时一眼就能看到。
+ *
+ * 缓存 60 秒：健康检查可能被频繁调用，不能每次都去连外网。
+ */
+let egressCache = { at: 0, data: null };
+async function egressProbe() {
+  if (egressCache.data && Date.now() - egressCache.at < 60000) return egressCache.data;
+  const targets = {
+    wechat: 'https://api.weixin.qq.com/',
+    ai: `${String(CONFIG.ai.baseUrl || 'https://api.deepseek.com').replace(/\/+$/, '')}/`
+  };
+  const out = {};
+  /* eslint-disable no-await-in-loop */
+  for (const key of Object.keys(targets)) {
+    const t0 = Date.now();
+    try {
+      const res = await fetch(targets[key], { method: 'GET', signal: AbortSignal.timeout(4000) });
+      // 拿到任何 HTTP 响应都说明"出得去"（401/404 都无所谓）
+      out[key] = { ok: true, status: res.status, ms: Date.now() - t0 };
+    } catch (e) {
+      const cause = (e && e.cause) || {};
+      out[key] = {
+        ok: false,
+        ms: Date.now() - t0,
+        error: (e && e.message) || 'ERR',
+        // ENOTFOUND = DNS 解析不了；ECONNREFUSED/ETIMEDOUT/EHOSTUNREACH = 路由被挡
+        code: cause.code || '',
+        target: targets[key]
+      };
+    }
+  }
+  egressCache = { at: Date.now(), data: out };
+  return out;
+}
+
 function newJob(owner) {
   const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
   const now = Date.now();
@@ -588,10 +630,29 @@ const ROUTES = {
   },
 
   'GET /api/health': async (req, res) => {
+    const egress = await egressProbe();
+    const egressBad = Object.keys(egress).filter((k) => !egress[k].ok);
     sendJson(res, 200, {
       ok: true,
       version: APP_CONFIG.VERSION,
       uptimeSec: Math.round((Date.now() - startedAt) / 1000),
+      /**
+       * 容器能不能主动访问外网（出方向）。
+       *
+       * 为什么要在这里自测：这一项不开，**AI 和微信登录会同时废掉**，
+       * 而现象很容易被误判 —— 控制台里"公网访问"是开着的、域名也能打开，
+       * 只是容器出不去。真机上表现为"账号登录不上 + AI 永远是本机文案"。
+       * 服务端看不到自己的出网能力（只能等调用失败），所以放进健康检查，
+       * 谁都能一眼看到；顺带把失败原因（DNS 还是没路由）也报出来。
+       */
+      egress: egressBad.length
+        ? {
+          ok: false,
+          detail: egress,
+          hint: '容器上不了外网 → AI 和微信登录都会失败。控制台 → 服务设置 → 打开「公网出口」再重新部署（注意别和"公网访问"搞混）',
+          bad: egressBad
+        }
+        : { ok: true, detail: egress, hint: '' },
       ai: { configured: aiReady(), model: aiReady() ? CONFIG.ai.model : null, picksCharacter: CONFIG.ai.aiPicksCharacter },
       /**
        * 登录是"真微信登录"还是"按设备认人"。

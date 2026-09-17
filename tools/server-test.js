@@ -199,6 +199,13 @@ function waitFor(url, tries) {
     ok(h.status === 200 && h.body.ok, 'GET /api/health');
     ok(h.body.ai && h.body.ai.configured === true, 'health 报告 AI 已配置', h.body.ai && h.body.ai.model);
     ok(h.body.characters === 60, `health 报告角色数 = ${h.body.characters}`);
+    // 出网自检：这一项不开，AI 和微信登录会同时废掉（线上真踩过），
+    // 所以健康检查必须带上它，而且失败时要给出"该去开公网出口"的提示
+    ok(h.body.egress && typeof h.body.egress.ok === 'boolean',
+      `health 报告容器出网状态（ok=${h.body.egress && h.body.egress.ok}）`);
+    ok(h.body.egress.detail && 'wechat' in h.body.egress.detail && 'ai' in h.body.egress.detail,
+      '出网自检覆盖微信和 AI 两个目标');
+    if (!h.body.egress.ok) ok(String(h.body.egress.hint).indexOf('公网出口') >= 0, '出网失败时提示去开公网出口');
     ok(!/test-key-must-not-leak/.test(h.raw), 'health 不泄露 API key');
 
     // 登录模式必须报出来：没配 WX_SECRET 时服务端**不报错**，
