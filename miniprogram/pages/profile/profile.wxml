@@ -1,0 +1,138 @@
+<star-bg ring="{{false}}" />
+
+<view class="page-body">
+  <!-- 档案 -->
+  <view class="pf-user fade-up">
+    <!--
+      头像昵称：2022-10-25 之后 getUserInfo/getUserProfile 全部收回（只返回"微信用户"和灰色默认头像），
+      官方给小程序的正规做法就是这两个控件 —— 让用户自己选：
+        · <button open-type="chooseAvatar"> 拿到的是**临时路径**，必须 saveFile 才能长期用
+        · <input type="nickname"> 键盘上方会展示微信昵称
+    -->
+    <button class="pf-avatar-btn" open-type="chooseAvatar" bindchooseavatar="onChooseAvatar">
+      <image wx:if="{{wechat.avatarUrl}}" class="pf-avatar-img" src="{{wechat.avatarUrl}}" mode="aspectFill" />
+      <view wx:else class="pf-avatar">{{profile && profile.name ? profile.name[0] : '✧'}}</view>
+    </button>
+    <view class="pf-info">
+      <input
+        class="pf-nickname"
+        type="nickname"
+        value="{{wechat.nickName}}"
+        placeholder="填个昵称"
+        placeholder-class="pf-nickname-ph"
+        bindblur="onNicknameBlur"
+      />
+      <text wx:if="{{profile.name}}" class="pf-name">称呼 {{profile.name}}</text>
+      <text wx:if="{{profile}}" class="pf-line">{{profile.birthDate}}{{profile.timeKnown ? ' ' + profile.birthTime : '（时辰未知）'}} · {{profile.cityLabel || profile.city}}</text>
+      <text wx:if="{{chartLine}}" class="pf-chart">{{chartLine}}</text>
+      <text wx:else class="pf-chart">还没有录入生辰</text>
+    </view>
+  </view>
+  <view class="btn btn-ghost btn-sm" style="margin-top:20rpx" bindtap="onEdit">编辑出生资料</view>
+
+  <!-- 统计 -->
+  <view class="section-title">我的命途</view>
+  <view class="pf-stats fade-up delay-1">
+    <view class="pf-stat">
+      <text class="pf-stat-num">{{stats.divinations}}</text>
+      <text class="pf-stat-k">次匹配</text>
+    </view>
+    <view class="pf-stat">
+      <text class="pf-stat-num">{{stats.codexCount}}</text>
+      <text class="pf-stat-k">/ {{stats.totalCharacters}} 已遇见</text>
+    </view>
+    <view class="pf-stat">
+      <text class="pf-stat-num">{{stats.aiCount}}</text>
+      <text class="pf-stat-k">次 AI 深化</text>
+    </view>
+  </view>
+
+  <!-- 历史 -->
+  <view class="section-title">匹配记录</view>
+  <view wx:if="{{history.length}}" class="card fade-up delay-2">
+    <view
+      wx:for="{{history}}"
+      wx:key="id"
+      class="pf-his"
+      data-mainid="{{item.mainId}}"
+      bindtap="onHistoryTap"
+    >
+      <view class="pf-his-main">
+        <view class="row" style="gap:10rpx">
+          <text class="pf-his-name">{{item.mainName}}</text>
+          <text class="tag {{item.rarityKey === 'legend' ? 'tag-gold' : ''}}">{{item.rarityLabel}}</text>
+        </view>
+        <text class="pf-his-work">《{{item.work}}》 · {{item.badge}}</text>
+      </view>
+      <view class="pf-his-right">
+        <text class="pf-his-score">{{item.resonance}}%</text>
+        <text class="pf-his-time">{{item.timeText}}</text>
+      </view>
+    </view>
+  </view>
+  <view wx:else class="card fade-up delay-2">
+    <text class="muted small">还没有记录。去占一次试试。</text>
+  </view>
+
+  <view class="row" style="gap:20rpx;margin-top:20rpx">
+    <view class="btn btn-plain btn-sm" style="flex:1" bindtap="onClearHistory">清空记录</view>
+    <view class="btn btn-plain btn-sm" style="flex:1" bindtap="onClearCodex">清空图鉴</view>
+  </view>
+
+  <!-- 设置 -->
+  <view class="section-title">设置</view>
+  <view class="card fade-up delay-3">
+    <view class="pf-setting">
+      <view class="pf-setting-text">
+        <text class="pf-setting-t">AI 深化解读</text>
+        <text class="pf-setting-d">开启后，匿名图谱数值会发送到服务器用于生成文案</text>
+      </view>
+      <view class="switch {{settings.useAi ? 'switch-on' : ''}}" bindtap="onToggleAi">
+        <text class="switch-label {{settings.useAi ? 'switch-label-on' : ''}}">{{settings.useAi ? '开' : '关'}}</text>
+      </view>
+    </view>
+
+    <view class="pf-setting">
+      <view class="pf-setting-text">
+        <text class="pf-setting-t">保存匹配记录</text>
+        <text class="pf-setting-d">记录只存在本机，用于回看历史</text>
+      </view>
+      <view class="switch {{settings.saveHistory ? 'switch-on' : ''}}" bindtap="onToggleHistory">
+        <text class="switch-label {{settings.saveHistory ? 'switch-label-on' : ''}}">{{settings.saveHistory ? '开' : '关'}}</text>
+      </view>
+    </view>
+
+    <view class="pf-setting" bindtap="onCheckBackend">
+      <view class="pf-setting-text">
+        <text class="pf-setting-t">解读服务状态</text>
+        <text class="pf-setting-d">{{backend.text}} · {{backend.base}}</text>
+      </view>
+      <text class="pf-dot pf-dot-{{backend.state}}"></text>
+    </view>
+  </view>
+
+  <!-- 关于 -->
+  <view class="section-title">关于</view>
+  <view class="card fade-up delay-4">
+    <view class="pf-setting" bindtap="onAbout">
+      <view class="pf-setting-text">
+        <text class="pf-setting-t">图谱怎么算的 / 数据去哪了</text>
+        <text class="pf-setting-d">点开看完整说明</text>
+      </view>
+      <text class="muted">›</text>
+    </view>
+    <view class="pf-setting" bindtap="onClearAll">
+      <view class="pf-setting-text">
+        <text class="pf-setting-t">清空全部本地数据</text>
+        <text class="pf-setting-d">出生资料、记录、图鉴一起删除</text>
+      </view>
+      <text class="muted">›</text>
+    </view>
+  </view>
+
+  <view class="disclaimer">
+    我推的星运 v{{version}}
+    图谱在本机计算，解读文案由人工智能生成，仅供娱乐。
+    角色与作品名称用于指代，权利归各自权利人所有。
+  </view>
+</view>

@@ -1,0 +1,489 @@
+const { CONFIG } = require('../config/index.js');
+const storage = require('../utils/storage.js');
+const payload = require('../core/payload.js');
+
+/**
+ * 网络层。客户端只认识自己的后端，不认识任何大模型。
+ *
+ * 三条设计底线：
+ *  1. 命盘在本地算，网络只负责"拿 AI 写好的解读"。所以断网、超时、
+ *     后端挂了，用户看到的依然是一份完整的占卜结果（模板文案），而不是一个报错页。
+ *  2. API key 只在服务端，客户端连模型名字都不该知道。
+ *  3. 上行只有匿名数字（见 core/payload.js），姓名生辰不出手机。
+ */
+
+let token = '';
+
+/**
+ * 弱网状态。官方给了 `wx.onNetworkWeakChange`（基础库 2.21.0+），
+ * 弱网时直接走本机解读 —— 与其让用户干等 50 秒再失败，不如立刻给结果。
+ */
+let weakNetwork = false;
+
+function watchNetwork() {
+  if (typeof wx === 'undefined' || typeof wx.onNetworkWeakChange !== 'function') return;
+  try {
+    wx.onNetworkWeakChange((res) => {
+      weakNetwork = !!(res && res.weakNet);
+    });
+  } catch (e) {
+    /* 忽略 */
+  }
+}
+
+/**
+ * 等 AI 的时候把屏幕保持常亮。
+ * 官方文档明确写了「小程序进入后台运行后，如果 5s 内网络请求没有结束，会回调错误信息
+ * fail interrupted」—— 而我们的 AI 要等 16~37 秒。用户等得无聊锁屏，
+ * 这次请求就白费了。所以等待期间保持常亮，拿到结果立刻恢复。
+ */
+let screenKeptOn = false;
+
+function keepScreenOn(on) {
+  if (typeof wx === 'undefined' || typeof wx.setKeepScreenOn !== 'function') return;
+  if (on === screenKeptOn) return;
+  screenKeptOn = on;
+  try {
+    wx.setKeepScreenOn({ keepScreenOn: on });
+  } catch (e) {
+    /* 忽略 */
+  }
+}
+
+function reasonOf(err) {
+  const msg = String((err && err.errMsg) || err || '');
+  if (msg.indexOf('timeout') >= 0) return 'TIMEOUT';
+  if (msg.indexOf('domain') >= 0 || msg.indexOf('合法域名') >= 0) return 'DOMAIN';
+  if (msg.indexOf('fail') >= 0) return 'NETWORK';
+  return 'NETWORK';
+}
+
+/**
+ * 统一请求封装，永远 resolve，不抛异常。
+ *
+ * 带一层**登录态自愈**：服务端返回 401 TOKEN_EXPIRED 时，强制重新登录一次再重试。
+ * 没有这一层的话，token 一过期用户付费权益就会"消失"（服务端按 IP 认人查不到数据），
+ * 而他完全不知道发生了什么。只重试一次，避免死循环。
+ */
+function request(path, opts) {
+  return doRequest(path, opts, false);
+}
+
+/**
+ * 微信云托管的「云调用」。
+ *
+ * 为什么用它：`wx.cloud.callContainer` 走微信内网，**不需要备案域名、
+ * 也不用在 MP 后台配 request 合法域名**，真机预览就能连上 ——
+ * 这正是"开发机本地后端在真机上连不上"（127.0.0.1 指向手机自己）的正解。
+ *
+ * ⚠️ 两个平台限制（决定了哪些请求不能走它）：
+ *   1. **单次超时不超过 15s** —— 我们的 AI 解读要 16~37 秒，走它会必然超时，
+ *      所以长请求仍然走公网域名（见 CLOUD_MAX_TIMEOUT 与 docs/DEPLOY-CLOUD.md）
+ *   2. 请求体不超过 100KB —— 我们上行只有几百字节的匿名数字，够用
+ */
+const CLOUD_MAX_TIMEOUT = 14000;
+
+function cloudReady() {
+  const c = CONFIG.CLOUD;
+  return !!(
+    c &&
+    c.ENABLED &&
+    c.ENV &&
+    c.SERVICE &&
+    typeof wx !== 'undefined' &&
+    wx.cloud &&
+    typeof wx.cloud.callContainer === 'function'
+  );
+}
+
+/** 这次请求适不适合走云调用（超时太长的必须走公网） */
+function useCloud(opts) {
+  return cloudReady() && (opts.timeout || 8000) <= CLOUD_MAX_TIMEOUT;
+}
+
+let cloudInited = false;
+function setupCloud() {
+  if (cloudInited || !cloudReady()) return;
+  cloudInited = true;
+  try {
+    wx.cloud.init({ env: CONFIG.CLOUD.ENV, traceUser: false });
+  } catch (e) {
+    /* 初始化失败就退回普通请求，别让启动挂在这儿 */
+  }
+}
+
+/**
+ * 发一次请求。云调用与普通 https 在这里分叉，上层逻辑完全一样。
+ * @param {function} done 收 { statusCode, data } 或 { fail }
+ */
+function send(path, o, header, done) {
+  if (useCloud(o)) {
+    setupCloud();
+    try {
+      wx.cloud.callContainer({
+        config: { env: CONFIG.CLOUD.ENV },
+        path,
+        method: o.method || 'GET',
+        header: Object.assign({ 'X-WX-SERVICE': CONFIG.CLOUD.SERVICE }, header),
+        data: o.data,
+        success: (res) => done({ statusCode: res.statusCode, data: res.data }),
+        fail: (err) => done({ fail: err })
+      });
+      return;
+    } catch (e) {
+      // 落到普通请求（比如基础库不支持云调用）
+    }
+  }
+  wx.request({
+    url: `${CONFIG.API_BASE.replace(/\/+$/, '')}${path}`,
+    method: o.method || 'GET',
+    data: o.data,
+    timeout: o.timeout || 8000,
+    header,
+    success: (res) => done({ statusCode: res.statusCode, data: res.data }),
+    fail: (err) => done({ fail: err })
+  });
+}
+
+function doRequest(path, opts, retried) {
+  const o = opts || {};
+  return new Promise((resolve) => {
+    const header = Object.assign(
+      { 'Content-Type': 'application/json' },
+      token ? { Authorization: `Bearer ${token}` } : {}
+    );
+    send(path, o, header, (res) => {
+      if (res.fail) {
+        resolve({ ok: false, status: 0, reason: reasonOf(res.fail), message: res.fail && res.fail.errMsg });
+        return;
+      }
+      const body = res.data && typeof res.data === 'object' ? res.data : null;
+      if (res.statusCode >= 200 && res.statusCode < 300 && body && body.ok) {
+        resolve({ ok: true, status: res.statusCode, body });
+        return;
+      }
+      // 登录态过期：强制重登后重试一次
+      if (res.statusCode === 401 && body && body.error === 'TOKEN_EXPIRED' && !retried) {
+        ensureSession(true).then((tk) => {
+          if (tk) doRequest(path, opts, true).then(resolve);
+          else {
+            resolve({
+              ok: false,
+              status: 401,
+              reason: 'TOKEN_EXPIRED',
+              body,
+              message: '登录状态已过期'
+            });
+          }
+        });
+        return;
+      }
+      resolve({
+        ok: false,
+        status: res.statusCode,
+        reason: `HTTP_${res.statusCode}`,
+        body,
+        message: body && body.message
+      });
+    });
+  });
+}
+
+/**
+ * 建立会话：wx.login 拿 code → 换 token。
+ * 服务端没配微信 appid 时会进入开发模式，用本地 devId 认人。
+ */
+function ensureSession(force) {
+  if (token && !force) return Promise.resolve(token);
+  token = storage.getToken();
+
+  return new Promise((resolve) => {
+    const send = (code) => {
+      request('/api/session', {
+        method: 'POST',
+        timeout: 8000,
+        data: { code: code || '', devId: storage.getDevId() }
+      }).then((res) => {
+        if (res.ok && res.body.token) {
+          token = res.body.token;
+          storage.setToken(token);
+          resolve(token);
+        } else {
+          resolve(null);
+        }
+      });
+    };
+
+    if (typeof wx.login !== 'function') {
+      send(null);
+      return;
+    }
+    wx.login({
+      success: (r) => send(r && r.code),
+      // 登录失败（比如开发者工具没登录）也照样试一次：服务端开发模式还能用 devId
+      fail: () => send(null)
+    });
+  });
+}
+
+/**
+ * 占卜：本地命盘 + 后端 AI 解读。
+ *
+ * @param {object} localResult core.divinate() 的本地结果（永远是完整的）
+ * @returns {Promise<{result, source, notice, quota, limited}>}
+ *   source: 'ai' | 'cache' | 'local'
+ *   notice: 需要提示给用户的一句话（降级原因），null 表示一切正常
+ */
+async function divinate(localResult, opts) {
+  const settings = storage.getSettings();
+  const disabled = !CONFIG.USE_REMOTE || !settings.useAi;
+
+  if (disabled) {
+    return { result: localResult, source: 'local', notice: null, reason: 'DISABLED' };
+  }
+
+  // 弱网就别试了：直接本机出结果，比让用户等 50 秒再失败体验好得多
+  if (weakNetwork) {
+    return {
+      result: localResult,
+      source: 'local',
+      notice: payload.localNotice('NETWORK'),
+      reason: 'WEAK_NETWORK'
+    };
+  }
+
+  await ensureSession();
+
+  const facts = payload.buildFacts(localResult, opts);
+  // 等 AI 期间保持屏幕常亮，避免用户锁屏导致请求被中断
+  keepScreenOn(true);
+  let res;
+  try {
+    res = await request('/api/divinate', {
+      method: 'POST',
+      data: facts,
+      timeout: CONFIG.API_TIMEOUT
+    });
+  } finally {
+    keepScreenOn(false);
+  }
+
+  if (!res.ok) {
+    // 429 是配额闸门，要把后端那句人话原样透给用户
+    if (res.status === 429 || res.status === 503) {
+      return {
+        result: localResult,
+        source: 'local',
+        limited: true,
+        quota: res.body && res.body.meta ? res.body.meta.quota : null,
+        notice: res.message || payload.localNotice('QUOTA'),
+        reason: (res.body && res.body.error) || 'QUOTA'
+      };
+    }
+    if (!CONFIG.FALLBACK_TO_LOCAL) {
+      return { result: localResult, source: 'local', notice: 'AI 解读暂时不可用', reason: res.reason };
+    }
+    return {
+      result: localResult,
+      source: 'local',
+      // 直接把真实原因传下去 —— 之前写死了 'NETWORK'，超时也被说成网络问题
+      notice: payload.localNotice(res.reason),
+      reason: res.reason
+    };
+  }
+
+  const merged = payload.applyServerResponse(localResult, res.body);
+  return {
+    result: merged.result,
+    source: res.body.source || 'ai',
+    applied: merged.applied,
+    quota: res.body.meta ? res.body.meta.quota : null,
+    notice: null,
+    reason: merged.applied.copy ? null : 'AI_FAILED'
+  };
+}
+
+/**
+ * 请求后端签名。**key 绝不能进包体**，所以签名只能在服务端做。
+ * 服务端返回 { signData, paySig, signature, outTradeNo }，
+ * 其中 signData 必须**原样**传给支付接口（服务端生成的字符串，客户端不能重新序列化）。
+ */
+function paySign(productId) {
+  return request('/api/pay/sign', {
+    method: 'POST',
+    data: { productId },
+    timeout: 10000
+  }).then((res) => {
+    if (res.ok && res.body && res.body.signData) {
+      return Object.assign({ ok: true }, res.body);
+    }
+    return {
+      ok: false,
+      reason: (res.body && res.body.error) || res.reason || 'SIGN_FAILED',
+      message: (res.body && res.body.message) || '下单失败'
+    };
+  });
+}
+
+/** 支付成功后向后端确认订单（平台的发货推送是异步的，这里主动问一次） */
+function payConfirm(outTradeNo) {
+  return request('/api/pay/confirm', {
+    method: 'POST',
+    data: { outTradeNo },
+    timeout: 12000
+  }).then((res) => (res.ok ? res.body : { ok: false, reason: res.reason }));
+}
+
+/** 同步付费权益（换设备/重装后把畅玩卡找回来） */
+function entitlementSync() {
+  return request('/api/entitlement', { timeout: 8000 }).then((res) =>
+    res.ok ? res.body : { ok: false, reason: res.reason }
+  );
+}
+
+/**
+ * 重新登录。用 `/api/account/relogin` 而不是 `/api/session`，
+ * 因为它能区分「高风险用户被平台拦截」（40226）和普通失败，
+ * 前者不该给用户"重试"的错觉。
+ */
+function relogin() {
+  return new Promise((resolve) => {
+    const send = (code) => {
+      request('/api/account/relogin', {
+        method: 'POST',
+        timeout: 10000,
+        data: { code: code || '', devId: storage.getDevId() }
+      }).then((res) => {
+        if (res.ok && res.body.token) {
+          token = res.body.token;
+          storage.setToken(token);
+          resolve({ ok: true, dev: !!res.body.dev });
+        } else {
+          resolve({
+            ok: false,
+            blocked: !!(res.body && res.body.blocked),
+            error: (res.body && res.body.error) || res.reason || 'RELOGIN_FAILED',
+            message: res.message || (res.body && res.body.message)
+          });
+        }
+      });
+    };
+    if (typeof wx.login !== 'function') {
+      send(null);
+      return;
+    }
+    wx.login({
+      success: (r) => send(r && r.code),
+      fail: () => send(null)
+    });
+  });
+}
+
+/** 拉取角色库（可选：让运营能不发版就换角色表） */
+function getRoster() {
+  return request('/api/roster', { timeout: 8000 }).then((res) => (res.ok ? res.body : null));
+}
+
+/**
+ * 失败原因的"人话版"。
+ *
+ * 之前降级提示统一写"星象信号不好"，用户根本不知道要改什么 ——
+ * 而实际原因几乎总是这三种之一，每一种都有明确的解决办法。
+ * 这条信息放在设置页的"解读服务状态"里（技术上，不该给普通用户看）。
+ */
+const REASON_TEXT = {
+  DOMAIN: '域名未校验 —— 开发者工具 → 详情 → 本地设置 → 勾选「不校验合法域名」',
+  NETWORK: '连不上 —— 确认后端已启动（npm start），地址见下方',
+  TIMEOUT: '超时 —— 后端响应太慢，或 IP 不通',
+  HTTP_503: '后端已连上，但 AI 未配置 —— 检查 server/.env 的 DEEPSEEK_API_KEY',
+  HTTP_401: '登录态问题 —— 试试重新登录',
+  HTTP_404: '接口不存在 —— 检查 API_BASE 是否指向本项目的后端'
+};
+
+/** 健康检查，我的页面用来显示后端状态 */
+function health() {
+  return request('/api/health', { timeout: 5000 }).then((res) => (res.ok ? res.body : null));
+}
+
+/** 失败原因 → 人话（账号页、设置页共用同一套口径，别各写一份） */
+function reasonText(reason, status) {
+  const key = status ? `HTTP_${status}` : reason;
+  return REASON_TEXT[key] || '';
+}
+
+/**
+ * 真机最容易踩的一条：`127.0.0.1` 在手机上指向**手机自己**，永远连不上开发机的后端。
+ * 给出可执行的提示（改局域网 IP + 真机只能走「真机调试」）。
+ */
+function baseHint() {
+  const base = String(CONFIG.API_BASE || '');
+  if (base.indexOf('127.0.0.1') >= 0 || base.indexOf('localhost') >= 0) {
+    return '真机预览时 127.0.0.1 指向手机自己 —— 要改成开发机的局域网 IP（如 http://192.168.1.5:8787）；'
+      + '而且真机只能用「真机调试」连本地后端，「预览」会拦未备案域名';
+  }
+  return '';
+}
+
+/**
+ * 诊断解读服务。比 health 多返回"为什么失败 + 该怎么办"。
+ * 给设置页用，方便一眼看出是配置问题还是服务没起。
+ */
+function diagnose() {
+  return request('/api/health', { timeout: 5000 }).then((res) => {
+    const base = CONFIG.API_BASE;
+    if (res.ok) {
+      const ai = res.body.ai || {};
+      return {
+        ok: true,
+        base,
+        aiConfigured: !!ai.configured,
+        model: ai.model || '',
+        message: ai.configured ? '正常（AI 已配置）' : '后端正常，但 AI 未配置 key',
+        hint: ai.configured ? '' : '检查 server/.env 的 DEEPSEEK_API_KEY',
+        reason: ''
+      };
+    }
+    const key = res.status ? `HTTP_${res.status}` : res.reason;
+    return {
+      ok: false,
+      base,
+      reason: key,
+      message: REASON_TEXT[key] || res.message || '连不上解读服务',
+      hint: baseHint()
+    };
+  });
+}
+
+/** 只要运势（不走 AI，不花配额） */
+function fortuneOnly(localResult) {
+  return request('/api/fortune', {
+    method: 'POST',
+    data: payload.buildFacts(localResult),
+    timeout: 6000
+  }).then((res) => (res.ok ? res.body.fortune : null));
+}
+
+function sessionInfo() {
+  return { hasToken: !!token, base: CONFIG.API_BASE, remote: CONFIG.USE_REMOTE, weakNetwork };
+}
+
+module.exports = {
+  request,
+  ensureSession,
+  relogin,
+  diagnose,
+  REASON_TEXT,
+  divinate,
+  paySign,
+  payConfirm,
+  reasonText,
+  baseHint,
+  entitlementSync,
+  getRoster,
+  health,
+  fortuneOnly,
+  sessionInfo,
+  watchNetwork,
+  keepScreenOn,
+  isWeakNetwork: () => weakNetwork
+};

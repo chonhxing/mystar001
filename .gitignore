@@ -1,0 +1,28 @@
+# 依赖与运行时产物
+node_modules/
+
+# 小程序工程里的共享代码是「同步生成」的副本，真源在仓库根目录
+# 改代码永远改根目录，然后跑 npm run sync
+miniprogram/core/
+miniprogram/data/
+miniprogram/config/
+miniprogram/services/
+miniprogram/utils/
+miniprogram/.shared-copy.json
+server/runtime/
+server/.tmp-*/
+*.log
+
+# 环境变量（含 API key，绝对不要提交）
+.env
+server/.env
+
+# 微信开发者工具的本地配置（含个人设置，含 appid 时也别提交）
+project.private.config.json
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 插件/工具残留
+.video_agent/

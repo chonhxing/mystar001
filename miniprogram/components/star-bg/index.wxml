@@ -1,0 +1,7 @@
+<view class="sb sb-{{tone}}">
+  <view class="sb-nebula"></view>
+  <view class="sb-stars"></view>
+  <view wx:if="{{ring}}" class="sb-ring">
+    <view wx:for="{{ticks}}" wx:key="*this" class="sb-tick" style="transform:rotate({{item * 30}}deg)"></view>
+  </view>
+</view>

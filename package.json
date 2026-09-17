@@ -1,0 +1,25 @@
+{
+  "name": "wo-tui-zhan-xing",
+  "version": "0.1.0",
+  "private": true,
+  "description": "我推的星运 · 微信小游戏（Canvas 自绘）+ 小程序版 + DeepSeek 后端 + 算法内核",
+  "scripts": {
+    "start": "node --env-file=server/.env server/index.js",
+    "dev": "node server/index.js",
+    "sync": "node tools/sync-shared.js",
+    "test": "node tools/sync-shared.js && node tools/selftest.js && node tools/check-structure.js && node tools/server-test.js && node tools/client-test.js && node tools/game-test.js && node tools/diag-scroll.js",
+    "test:core": "node tools/selftest.js",
+    "test:game": "node tools/game-test.js",
+    "test:server": "node tools/server-test.js",
+    "test:client": "node tools/client-test.js",
+    "check": "node tools/check-structure.js",
+    "test:live": "node --env-file=server/.env tools/live-test.js",
+    "test:ai": "node tools/server-test.js",
+    "test:scroll": "node tools/diag-scroll.js",
+    "icon": "node tools/make-icon.js",
+    "icon:check": "node tools/preview-icon.js"
+  },
+  "engines": {
+    "node": ">=20.6.0"
+  }
+}

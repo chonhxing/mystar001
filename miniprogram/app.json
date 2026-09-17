@@ -1,0 +1,40 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/quiz/quiz",
+    "pages/result/result",
+    "pages/codex/codex",
+    "pages/profile/profile",
+    "pages/character/character"
+  ],
+  "window": {
+    "backgroundTextStyle": "dark",
+    "navigationBarBackgroundColor": "#0B0A1F",
+    "navigationBarTitleText": "我推的星运",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#0B0A1F"
+  },
+  "tabBar": {
+    "color": "#6E6A8F",
+    "selectedColor": "#E8C87A",
+    "backgroundColor": "#0B0A1F",
+    "borderStyle": "black",
+    "list": [
+      {
+        "pagePath": "pages/index/index",
+        "text": "匹配"
+      },
+      {
+        "pagePath": "pages/codex/codex",
+        "text": "图鉴"
+      },
+      {
+        "pagePath": "pages/profile/profile",
+        "text": "我的"
+      }
+    ]
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json",
+  "lazyCodeLoading": "requiredComponents"
+}

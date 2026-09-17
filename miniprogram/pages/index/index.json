@@ -1,0 +1,7 @@
+{
+  "usingComponents": {
+    "star-bg": "/components/star-bg/index"
+  },
+  "navigationBarTitleText": "我推的星运",
+  "enablePullDownRefresh": false
+}

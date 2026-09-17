@@ -1,0 +1,302 @@
+/* ============================================================
+   我推的占星 · 全局样式
+   深空 + 星尘 + 暗金 的基础视觉。美术到位后主要替换这里与 assets/。
+   ============================================================ */
+
+page {
+  /* ---- 色彩令牌 ---- */
+  --bg: #0B0A1F;
+  --bg-2: #14112E;
+  --bg-3: #1D1840;
+  --panel: rgba(255, 255, 255, 0.045);
+  --panel-2: rgba(255, 255, 255, 0.08);
+  --line: rgba(232, 200, 122, 0.18);
+  --line-soft: rgba(255, 255, 255, 0.08);
+
+  --ink: #E9E7F7;
+  --ink-2: #A9A4C7;
+  --ink-3: #6E6A8F;
+
+  --gold: #E8C87A;
+  --gold-deep: #B9922F;
+  --violet: #8B6CF0;
+  --cyan: #63D7E8;
+  --rose: #F06C9B;
+  --green: #7BD88F;
+  --red: #E86A6A;
+
+  --radius: 24rpx;
+  --radius-lg: 36rpx;
+  --gap: 24rpx;
+  --shadow: 0 16rpx 48rpx rgba(0, 0, 0, 0.45);
+
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 28rpx;
+  line-height: 1.65;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue',
+    'Microsoft YaHei', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ------------------------------------------------------------
+   背景：星尘穹顶（纯 CSS，后续可换成 canvas/星云大图）
+   ------------------------------------------------------------ */
+.starfield {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(900rpx 700rpx at 15% 8%, rgba(139, 108, 240, 0.30), transparent 70%),
+    radial-gradient(800rpx 600rpx at 88% 22%, rgba(99, 215, 232, 0.16), transparent 72%),
+    radial-gradient(1000rpx 800rpx at 50% 108%, rgba(232, 200, 122, 0.14), transparent 70%),
+    linear-gradient(180deg, #0B0A1F 0%, #100D26 45%, #08071A 100%);
+}
+
+.starfield::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.55;
+  background-image:
+    radial-gradient(2rpx 2rpx at 12% 14%, #fff, transparent),
+    radial-gradient(2rpx 2rpx at 32% 6%, rgba(255, 255, 255, 0.8), transparent),
+    radial-gradient(3rpx 3rpx at 68% 12%, #fff, transparent),
+    radial-gradient(2rpx 2rpx at 84% 28%, rgba(255, 255, 255, 0.7), transparent),
+    radial-gradient(2rpx 2rpx at 22% 46%, rgba(255, 255, 255, 0.6), transparent),
+    radial-gradient(3rpx 3rpx at 76% 58%, #fff, transparent),
+    radial-gradient(2rpx 2rpx at 46% 72%, rgba(255, 255, 255, 0.75), transparent),
+    radial-gradient(2rpx 2rpx at 92% 84%, rgba(255, 255, 255, 0.6), transparent),
+    radial-gradient(2rpx 2rpx at 8% 88%, rgba(255, 255, 255, 0.5), transparent),
+    radial-gradient(2rpx 2rpx at 58% 36%, rgba(255, 255, 255, 0.5), transparent);
+  animation: twinkle 5.5s ease-in-out infinite alternate;
+}
+
+@keyframes twinkle {
+  from { opacity: 0.30; }
+  to   { opacity: 0.75; }
+}
+
+/* 内容层要盖在星尘之上 */
+.page-body {
+  position: relative;
+  z-index: 1;
+  padding: var(--gap) var(--gap) 80rpx;
+  box-sizing: border-box;
+  min-height: 100vh;
+}
+
+/* ------------------------------------------------------------
+   排版
+   ------------------------------------------------------------ */
+.title-xl {
+  font-size: 60rpx;
+  line-height: 1.25;
+  font-weight: 700;
+  letter-spacing: 4rpx;
+  background: linear-gradient(180deg, #FFF6DC 0%, var(--gold) 55%, #A87A22 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.title-lg {
+  font-size: 40rpx;
+  font-weight: 600;
+  letter-spacing: 2rpx;
+  color: var(--ink);
+}
+
+.title-md {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  font-size: 30rpx;
+  font-weight: 600;
+  color: var(--gold);
+  letter-spacing: 2rpx;
+  margin: 40rpx 0 20rpx;
+}
+
+.section-title::before {
+  content: '';
+  width: 6rpx;
+  height: 28rpx;
+  border-radius: 4rpx;
+  background: linear-gradient(180deg, var(--gold), var(--violet));
+}
+
+.muted { color: var(--ink-2); }
+.dim   { color: var(--ink-3); }
+.small { font-size: 24rpx; }
+.tiny  { font-size: 22rpx; }
+.center { text-align: center; }
+.mono {
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  letter-spacing: 1rpx;
+}
+
+/* ------------------------------------------------------------
+   卡片 / 面板
+   ------------------------------------------------------------ */
+.card {
+  background: var(--panel);
+  border: 1rpx solid var(--line-soft);
+  border-radius: var(--radius);
+  padding: 28rpx;
+  box-sizing: border-box;
+}
+
+.card-glow {
+  border: 1rpx solid var(--line);
+  background:
+    linear-gradient(180deg, rgba(232, 200, 122, 0.09), rgba(232, 200, 122, 0.01) 42%),
+    var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.card + .card { margin-top: var(--gap); }
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+
+.divider {
+  height: 1rpx;
+  background: linear-gradient(90deg, transparent, var(--line-soft), transparent);
+  margin: 24rpx 0;
+}
+
+/* ------------------------------------------------------------
+   按钮
+   ------------------------------------------------------------ */
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 96rpx;
+  border-radius: 48rpx;
+  font-size: 32rpx;
+  font-weight: 600;
+  letter-spacing: 4rpx;
+  transition: transform 0.14s ease, opacity 0.14s ease;
+}
+
+.btn:active { transform: scale(0.972); opacity: 0.9; }
+
+.btn-primary {
+  color: #2A1E05;
+  background: linear-gradient(135deg, #FFE9AE 0%, var(--gold) 45%, #C79A38 100%);
+  box-shadow: 0 12rpx 40rpx rgba(232, 200, 122, 0.28);
+}
+
+.btn-ghost {
+  color: var(--gold);
+  border: 1rpx solid var(--line);
+  background: rgba(232, 200, 122, 0.06);
+}
+
+.btn-plain {
+  color: var(--ink-2);
+  border: 1rpx solid var(--line-soft);
+}
+
+.btn-sm {
+  height: 68rpx;
+  border-radius: 34rpx;
+  font-size: 26rpx;
+  letter-spacing: 2rpx;
+  padding: 0 32rpx;
+}
+
+.btn[disabled] { opacity: 0.42; }
+
+/* ------------------------------------------------------------
+   标签 / 徽章
+   ------------------------------------------------------------ */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  height: 44rpx;
+  padding: 0 18rpx;
+  border-radius: 22rpx;
+  font-size: 22rpx;
+  line-height: 1;
+  color: var(--ink-2);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1rpx solid var(--line-soft);
+}
+
+.tag-gold {
+  color: var(--gold);
+  background: rgba(232, 200, 122, 0.1);
+  border-color: rgba(232, 200, 122, 0.28);
+}
+
+.tag-violet {
+  color: #C6B4FF;
+  background: rgba(139, 108, 240, 0.14);
+  border-color: rgba(139, 108, 240, 0.32);
+}
+
+.rarity-legend { color: #FFD98A; background: rgba(232, 200, 122, 0.14); border-color: rgba(232, 200, 122, 0.42); }
+.rarity-epic   { color: #C6B4FF; background: rgba(139, 108, 240, 0.16); border-color: rgba(139, 108, 240, 0.38); }
+.rarity-rare   { color: #9FE3F0; background: rgba(99, 215, 232, 0.13); border-color: rgba(99, 215, 232, 0.32); }
+.rarity-common { color: var(--ink-2); }
+
+/* ------------------------------------------------------------
+   动效
+   ------------------------------------------------------------ */
+.fade-up {
+  animation: fadeUp 0.5s cubic-bezier(0.22, 0.85, 0.3, 1) both;
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(24rpx); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.delay-1 { animation-delay: 0.10s; }
+.delay-2 { animation-delay: 0.20s; }
+.delay-3 { animation-delay: 0.32s; }
+.delay-4 { animation-delay: 0.44s; }
+.delay-5 { animation-delay: 0.56s; }
+
+.spin {
+  animation: spin 9s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 底部娱乐声明 */
+.disclaimer {
+  margin: 48rpx 8rpx 0;
+  font-size: 22rpx;
+  line-height: 1.7;
+  color: var(--ink-3);
+  text-align: center;
+}

@@ -1,0 +1,7 @@
+{
+  "usingComponents": {
+    "star-bg": "/components/star-bg/index",
+    "char-card": "/components/char-card/index"
+  },
+  "navigationBarTitleText": "命途图鉴"
+}

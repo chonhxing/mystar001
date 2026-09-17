@@ -1,0 +1,168 @@
+<star-bg ring="{{true}}" />
+
+<view class="page-body">
+  <!-- 标题 -->
+  <view class="hero fade-up">
+    <view class="hero-arc">✦ ✧ ✦</view>
+    <view class="title-xl">我推的星运</view>
+    <view class="hero-sub">把生辰写成一张命途图谱，看你的性格最像哪个角色</view>
+    <view class="hero-note">全程免费 · 不收集姓名生辰到服务器 · 结果仅供娱乐</view>
+  </view>
+
+  <!-- 今日提示（有资料才出现） -->
+  <view wx:if="{{today}}" class="card card-glow fade-up delay-1">
+    <view class="row-between">
+      <view>
+        <text class="title-md">{{today.date}} · 今日</text>
+        <text class="small muted" style="display:block;margin-top:4rpx">{{today.sunName}} · 本命{{today.element}} · {{today.rarityLabel}}</text>
+      </view>
+      <view class="today-level">
+        <text class="today-stars">{{today.starText}}</text>
+        <text class="today-name">{{today.levelName}}</text>
+      </view>
+    </view>
+
+    <view class="today-desc">{{today.levelDesc}}</view>
+
+    <view class="today-grid">
+      <view class="today-cell">
+        <text class="today-k">宜</text>
+        <text class="today-v">{{today.good[0]}}</text>
+      </view>
+      <view class="today-cell">
+        <text class="today-k">忌</text>
+        <text class="today-v">{{today.bad[0]}}</text>
+      </view>
+      <view class="today-cell">
+        <text class="today-k">幸运色</text>
+        <view class="row">
+          <view class="dot" style="background:{{today.luckyColor.hex}}"></view>
+          <text class="today-v">{{today.luckyColor.name}}</text>
+        </view>
+      </view>
+      <view class="today-cell">
+        <text class="today-k">幸运数 / 物</text>
+        <text class="today-v">{{today.luckyNumber}} · {{today.luckyItem}}</text>
+      </view>
+    </view>
+
+    <view class="today-tip">最突出的一轴：{{today.dominantName}} · {{today.dominantBadge}}</view>
+  </view>
+
+  <!-- 生辰表单 -->
+  <view class="section-title">你的生辰</view>
+  <view class="card fade-up delay-2">
+    <view class="field">
+      <text class="field-label">称呼（可留空）</text>
+      <input
+        class="field-input"
+        value="{{form.name}}"
+        placeholder="随便写一个，用于生成称号"
+        placeholder-class="ph"
+        maxlength="12"
+        bindinput="onNameInput"
+      />
+    </view>
+
+    <view class="field">
+      <text class="field-label">性别（可留空）</text>
+      <view class="seg">
+        <view
+          wx:for="{{genders}}"
+          wx:key="*this"
+          class="seg-item {{form.genderIndex === index ? 'seg-on' : ''}}"
+          data-index="{{index}}"
+          bindtap="onGenderTap"
+        >{{item}}</view>
+      </view>
+    </view>
+
+    <view class="field">
+      <text class="field-label">出生日期</text>
+      <picker mode="date" value="{{form.birthDate}}" start="{{dateStart}}" end="{{dateEnd}}" bindchange="onDateChange">
+        <view class="field-picker">
+          <text>{{form.birthDate}}</text>
+          <text class="field-arrow">›</text>
+        </view>
+      </picker>
+    </view>
+
+    <view class="field">
+      <view class="row-between">
+        <text class="field-label">出生时辰</text>
+        <!-- 「不知道」是个正经按钮：不记得时辰的人不用假装翻一遍时间轮盘 -->
+        <view class="switch" bindtap="onToggleTime">
+          <text class="switch-label {{form.timeKnown ? 'switch-label-on' : ''}}">
+            {{form.timeKnown ? '不知道' : '去填写'}}
+          </text>
+        </view>
+      </view>
+      <picker
+        wx:if="{{form.timeKnown}}"
+        mode="time"
+        value="{{form.birthTime}}"
+        bindchange="onTimeChange"
+      >
+        <view class="field-picker">
+          <text>{{form.birthTime}}</text>
+          <text class="field-arrow">›</text>
+        </view>
+      </picker>
+      <view wx:else class="field-hint">
+        不知道就空着——上升星座和时柱会留白，但太阳、月亮、年月日柱照样能算
+      </view>
+    </view>
+
+    <view class="field">
+      <text class="field-label">出生地</text>
+      <!-- 原生地区选择器本身就是三级（省级 → 市级 → 区/县），
+           省级列表里直辖市与省同级，并且自带中国香港 / 中国澳门 / 中国台湾 -->
+      <picker mode="region" value="{{region}}" bindchange="onRegionChange">
+        <view class="field-picker">
+          <text>{{cityLabel}}</text>
+          <text class="field-arrow">›</text>
+        </view>
+      </picker>
+      <view class="field-hint">只用来估算上升星座的经纬度，不会上传</view>
+    </view>
+
+    <view class="field row-between ai-row">
+      <view>
+        <text class="field-label">AI 深化解读</text>
+        <text class="field-hint" style="margin-top:4rpx">
+          {{useAi ? '图谱在本机计算，解读文案由 AI 生成' : '全部在本机完成，不联网'}}
+        </text>
+      </view>
+      <view class="switch" bindtap="onToggleAi">
+        <text class="switch-label {{useAi ? 'switch-label-on' : ''}}">{{useAi ? '开' : '关'}}</text>
+      </view>
+    </view>
+
+    <view class="field">
+      <text class="field-label">问几道题</text>
+      <picker mode="selector" range="{{quizCounts}}" value="{{quizIndex}}" bindchange="onQuizCountChange">
+        <view class="field-picker">
+          <text>{{quizCounts[quizIndex]}} 题</text>
+          <text class="field-arrow">›</text>
+        </view>
+      </picker>
+    </view>
+  </view>
+
+  <!-- 行动按钮 -->
+  <view class="actions fade-up delay-3">
+    <view class="btn btn-primary" bindtap="onStart">开始匹配</view>
+    <view class="btn btn-ghost" bindtap="onQuickDraw">不填生辰 · 随机来一次</view>
+  </view>
+
+  <!-- 收集进度 -->
+  <view class="progress-line fade-up delay-4" bindtap="onCodex">
+    <text class="muted small">已解锁命途 {{codexCount}} / {{totalCharacters}}</text>
+    <text class="dim small"> · 去图鉴看看 ›</text>
+  </view>
+
+  <view class="disclaimer">
+    本小程序的图谱由星象与干支算法在本机计算，解读文案可能由人工智能生成。
+    所有内容仅供娱乐，不构成医疗、投资、情感或人生建议。
+  </view>
+</view>

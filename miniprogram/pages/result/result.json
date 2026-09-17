@@ -1,0 +1,8 @@
+{
+  "usingComponents": {
+    "star-bg": "/components/star-bg/index",
+    "char-card": "/components/char-card/index",
+    "dim-bar": "/components/dim-bar/index"
+  },
+  "navigationBarTitleText": "命途已读出"
+}

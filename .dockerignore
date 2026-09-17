@@ -1,0 +1,32 @@
+# 不进镜像的东西。镜像越小，云托管拉取和冷启动越快。
+#
+# ⚠️ 这里也起一道"密钥外泄"的兜底：.env 万一被 COPY . . 带进镜像，
+#    镜像里的密钥就跟着镜像走了（镜像可以被拉到本地看）。
+
+.git
+.gitignore
+node_modules
+*.log
+
+# 客户端那侧的代码：跑在手机上，服务端用不到
+src
+miniprogram
+services
+utils
+tools
+docs
+store
+project.config.json
+project.private.config.json
+game.js
+game.json
+game.json
+README.md
+
+# 密钥与本地数据
+.env
+server/.env
+server/.env.example
+server/runtime
+server/.tmp-*
+.video_agent

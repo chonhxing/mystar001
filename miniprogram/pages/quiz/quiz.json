@@ -1,0 +1,6 @@
+{
+  "usingComponents": {
+    "star-bg": "/components/star-bg/index"
+  },
+  "navigationBarTitleText": "九个问题"
+}

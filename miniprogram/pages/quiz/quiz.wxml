@@ -1,0 +1,53 @@
+<star-bg ring="{{false}}" />
+
+<view class="page-body quiz">
+  <!-- 进度 -->
+  <view class="qz-top">
+    <view class="qz-count">
+      <text class="qz-num">{{index + 1}}</text>
+      <text class="qz-total">/ {{total}}</text>
+    </view>
+    <view class="qz-progress">
+      <view class="qz-progress-fill" style="width:{{progress}}%"></view>
+    </view>
+    <view class="qz-skip" bindtap="onSkipAll">跳过</view>
+  </view>
+
+  <view wx:if="{{index === 0}}" class="qz-intro">{{intro}}</view>
+
+  <!-- 题目 -->
+  <view class="qz-q fade-up" wx:if="{{current}}">
+    <text class="qz-text">{{current.text}}</text>
+    <text wx:if="{{current.hint}}" class="qz-hint">{{current.hint}}</text>
+    <!-- 多选题会明确告诉你"可以勾几个"，不用自己猜 -->
+    <text wx:if="{{multiHint}}" class="qz-multi">{{multiHint}}</text>
+  </view>
+
+  <!-- 选项：数量是变长的（2~6 个），多选题画方框，单选题画圆点 -->
+  <view class="qz-options">
+    <view
+      wx:for="{{current.options}}"
+      wx:key="index"
+      class="qz-option {{(current.multi ? picked.indexOf(index) >= 0 : picking === index) ? 'qz-option-on' : ''}}"
+      data-index="{{index}}"
+      bindtap="onSelect"
+    >
+      <view class="qz-dot {{current.multi ? 'qz-dot-box' : ''}}"></view>
+      <text class="qz-option-text">{{item.text}}</text>
+    </view>
+  </view>
+
+  <view class="qz-foot">
+    <view class="btn btn-plain btn-sm" bindtap="onPrev">上一题</view>
+    <view
+      wx:if="{{current.multi}}"
+      class="btn btn-sm {{canNext ? 'btn-primary' : 'btn-plain'}}"
+      bindtap="onDone"
+    >下一题</view>
+    <view wx:else class="btn btn-plain btn-sm" bindtap="onSkipOne">跳过这题</view>
+  </view>
+
+  <view wx:if="{{current.multi}}" class="qz-skipone" bindtap="onSkipOne">跳过这题</view>
+
+  <view class="disclaimer">已经答了 {{answered}} 题。答案只会改变图谱上几根轴的数值，不会改变你是谁。</view>
+</view>

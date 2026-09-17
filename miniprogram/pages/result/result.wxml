@@ -1,0 +1,181 @@
+<star-bg ring="{{true}}" tone="{{tone}}" />
+
+<!-- ============ 揭晓过程（转场） ============ -->
+<view wx:if="{{casting}}" class="casting">
+  <view class="casting-ring">
+    <view class="casting-ring-inner"></view>
+    <view class="casting-glow"></view>
+  </view>
+  <view class="casting-text">{{castingText}}</view>
+  <view class="casting-sub">星盘正在对齐 · 命途正在收束</view>
+</view>
+
+<view wx:elif="{{empty}}" class="page-body">
+  <view class="empty">
+    <view class="empty-glyph">✧</view>
+    <text class="empty-text">{{emptyText}}</text>
+    <view class="btn btn-primary" style="margin-top:40rpx" bindtap="onAgain">回去重新匹配</view>
+  </view>
+</view>
+
+<view wx:else class="page-body">
+  <!-- ============ 结果头 ============ -->
+  <view class="rs-head fade-up">
+    <view class="rs-title">{{title}}</view>
+    <view class="rs-sub">{{subtitle}}</view>
+    <view class="rs-tags">
+      <text class="tag tag-gold">共振 {{main.resonance}}%</text>
+      <text class="tag">{{main.rarity.label}}</text>
+      <text wx:if="{{source === 'ai'}}" class="tag tag-violet">AI 深化解读</text>
+      <text wx:if="{{source === 'cache'}}" class="tag tag-violet">AI 解读 · 同盘同解</text>
+      <text wx:if="{{aiPending}}" class="tag">解读生成中…</text>
+    </view>
+  </view>
+
+  <!-- ============ 主推角色 ============ -->
+  <view class="fade-up delay-1">
+    <char-card
+      char="{{main.char}}"
+      rarity="{{main.rarity}}"
+      resonance="{{main.resonance}}"
+      size="lg"
+      bindtapcard="onCharTap"
+    />
+  </view>
+
+  <view wx:if="{{sharedFates.length}}" class="rs-shared fade-up delay-1">
+    <text class="rs-shared-label">你们共享的命途</text>
+    <view class="rs-shared-list">
+      <text wx:for="{{sharedFates}}" wx:key="*this" class="tag tag-gold">{{item}}</text>
+    </view>
+  </view>
+
+  <!-- ============ 图谱本质 ============ -->
+  <view class="section-title">图谱本质</view>
+  <view class="card card-glow fade-up delay-2">
+    <text class="para">{{copy.essence}}</text>
+    <view class="divider"></view>
+    <view class="fate-list">
+      <view wx:for="{{fates}}" wx:key="id" class="fate-row">
+        <view class="fate-head">
+          <text class="fate-name">{{item.name}}</text>
+        </view>
+        <text class="fate-summary">{{item.summary}}</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- ============ 图谱全相 ============ -->
+  <view class="section-title">图谱全相</view>
+  <view class="card fade-up delay-2">
+    <view wx:for="{{rows}}" wx:key="k" class="kv">
+      <text class="kv-k">{{item.k}}</text>
+      <view class="kv-right">
+        <text class="kv-v">{{item.v}}</text>
+        <text wx:if="{{item.note}}" class="kv-note">{{item.note}}</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- ============ 八轴 ============ -->
+  <view class="section-title">八轴命途坐标</view>
+  <view class="card fade-up delay-3">
+    <dim-bar axes="{{axes}}" />
+  </view>
+
+  <!-- ============ 共振解读 ============ -->
+  <view class="section-title">你们为什么共振</view>
+  <view class="card fade-up delay-3">
+    <text class="para">{{copy.resonance}}</text>
+  </view>
+
+  <!-- ============ 副推 ============ -->
+  <view wx:if="{{side.length}}" class="section-title">副推 · 另外两条路</view>
+  <view class="side-list fade-up delay-4">
+    <char-card
+      wx:for="{{side}}"
+      wx:key="id"
+      char="{{item.char}}"
+      rarity="{{item.rarity}}"
+      resonance="{{item.resonance}}"
+      size="sm"
+      show-fates="{{false}}"
+      bindtapcard="onCharTap"
+    />
+  </view>
+
+  <!-- ============ 差异 ============ -->
+  <view class="section-title">但你没有走进 TA 的全部命途</view>
+  <view class="card fade-up delay-4">
+    <text class="para">{{copy.difference}}</text>
+  </view>
+
+  <!-- ============ 未带入的命途 ============ -->
+  <view class="section-title">你带不动的命途</view>
+  <view class="fade-up delay-5">
+    <char-card
+      char="{{anti.char}}"
+      rarity="{{anti.rarity}}"
+      resonance="{{anti.resonance}}"
+      size="sm"
+      show-fates="{{false}}"
+      bindtapcard="onCharTap"
+    />
+  </view>
+  <view class="card fade-up delay-5" style="margin-top:20rpx">
+    <text class="para">{{copy.anti}}</text>
+    <view wx:if="{{antiAxis}}" class="anti-axis">
+      <text class="anti-axis-text">
+        你偏向「{{antiAxis.userSide}}」，TA 偏向「{{antiAxis.charSide}}」——{{antiAxis.name}}是你们之间的墙
+      </text>
+    </view>
+  </view>
+
+  <!-- ============ 神谕 ============ -->
+  <view class="oracle fade-up delay-5">
+    <view class="oracle-label">神谕</view>
+    <text class="oracle-text">{{copy.counsel}}</text>
+  </view>
+
+  <!-- ============ 今日提示 ============ -->
+  <view wx:if="{{fortune}}" class="section-title">今日提示</view>
+  <view wx:if="{{fortune}}" class="card fade-up delay-5">
+    <view class="row-between">
+      <text class="small muted">{{fortune.date}}</text>
+      <text class="small" style="color:#E8C87A">{{fortune.starText}} {{fortune.levelName}}</text>
+    </view>
+    <view class="divider"></view>
+    <view class="fortune-row"><text class="fortune-k">宜</text><text class="fortune-v">{{fortune.good[0]}}</text></view>
+    <view class="fortune-row"><text class="fortune-k">宜</text><text class="fortune-v">{{fortune.good[1]}}</text></view>
+    <view class="fortune-row"><text class="fortune-k">忌</text><text class="fortune-v">{{fortune.bad[0]}}</text></view>
+    <view class="fortune-row"><text class="fortune-k">忌</text><text class="fortune-v">{{fortune.bad[1]}}</text></view>
+    <view class="fortune-row">
+      <text class="fortune-k">幸运</text>
+      <text class="fortune-v">
+        色彩 {{fortune.luckyColor.name}} · 数字 {{fortune.luckyNumber}} · 幸运物 {{fortune.luckyItem}}
+      </text>
+    </view>
+  </view>
+
+  <!-- ============ 提示与操作 ============ -->
+  <view wx:if="{{notice}}" class="notice">{{notice}}</view>
+  <view wx:if="{{codex && codex.added}}" class="notice notice-good">
+    图鉴解锁 {{codex.added}} 个新角色，已收集 {{codex.total}} 个
+  </view>
+
+  <view class="actions">
+    <view class="btn btn-primary" bindtap="onAgain">再占一次</view>
+    <view class="rs-actions">
+      <button class="btn btn-ghost rs-half" open-type="share">分享命途</button>
+      <view class="btn btn-plain rs-half" bindtap="onCodex">去图鉴</view>
+    </view>
+  </view>
+
+  <view wx:if="{{aiLabel}}" class="ai-label">
+    本页解读文案由人工智能生成{{source === 'local' || source === '' ? '（本次为本地模板版本）' : ''}}
+  </view>
+  <view class="disclaimer">
+    图谱由星象与干支算法在本机计算，所有内容仅供娱乐，不构成医疗、投资、情感或任何人生建议。
+    生辰资料只保存在你的手机本地。
+  </view>
+</view>

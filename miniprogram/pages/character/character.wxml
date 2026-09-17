@@ -1,0 +1,60 @@
+<star-bg ring="{{false}}" tone="{{char.rarity === 'legend' ? 'legend' : 'default'}}" />
+
+<view wx:if="{{ready}}" class="page-body">
+  <view class="ch-head fade-up">
+    <char-card
+      char="{{char}}"
+      rarity="{{rarity}}"
+      resonance="{{resonance || 0}}"
+      size="lg"
+      show-fates="{{false}}"
+    />
+    <view wx:if="{{!unlocked}}" class="ch-locked">你还没有在匹配中遇见 TA</view>
+  </view>
+
+  <view class="card card-glow fade-up delay-1">
+    <view class="row" style="gap:12rpx">
+      <text class="tag tag-gold">{{rarity.label}}</text>
+      <text class="tag">{{char.medium}}</text>
+      <text wx:if="{{resonance}}" class="tag tag-violet">与你共振 {{resonance}}%</text>
+    </view>
+    <view class="divider"></view>
+    <text class="ch-motif">{{char.motif}}</text>
+    <text class="ch-signature">{{char.signature}}</text>
+  </view>
+
+  <view wx:if="{{sharedFates.length}}" class="ch-shared fade-up delay-1">
+    <text class="small muted">你们共享的命途</text>
+    <view class="row" style="gap:12rpx;flex-wrap:wrap;margin-top:10rpx">
+      <text wx:for="{{sharedFates}}" wx:key="id" class="tag tag-gold">{{item.name}}</text>
+    </view>
+  </view>
+
+  <view class="section-title">TA 的命途</view>
+  <view class="card fade-up delay-2">
+    <view wx:for="{{fates}}" wx:key="id" class="ch-fate">
+      <text class="ch-fate-name">{{item.name}}</text>
+      <text class="ch-fate-line">{{item.summary}}</text>
+      <text class="ch-fate-shadow">阴影面：{{item.shadow}}</text>
+    </view>
+  </view>
+
+  <view class="section-title">TA 的八轴坐标</view>
+  <view class="card fade-up delay-3">
+    <view class="ch-dominant">
+      <text class="ch-dominant-k">最突出</text>
+      <text class="ch-dominant-v">{{dominant.name}} · {{dominant.badge}}</text>
+    </view>
+    <dim-bar axes="{{axes}}" />
+    <view class="ch-axis-note">{{axisNote}}</view>
+  </view>
+
+  <view class="actions">
+    <button class="btn btn-primary" open-type="share">分享这条命途</button>
+    <view class="btn btn-plain" bindtap="onBack">回到图鉴</view>
+  </view>
+
+  <view class="disclaimer">
+    角色与作品名称仅用于指代，权利归各自权利人所有；本页文字为原创描述。
+  </view>
+</view>

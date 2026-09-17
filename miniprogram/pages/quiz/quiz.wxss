@@ -1,0 +1,127 @@
+.quiz { padding-top: 32rpx; }
+
+.qz-top {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+}
+
+.qz-count { display: flex; align-items: baseline; flex: none; }
+.qz-num { font-size: 40rpx; font-weight: 700; color: #E8C87A; }
+.qz-total { font-size: 22rpx; color: #6E6A8F; margin-left: 4rpx; }
+
+.qz-progress {
+  flex: 1;
+  height: 6rpx;
+  border-radius: 3rpx;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.qz-progress-fill {
+  height: 100%;
+  border-radius: 3rpx;
+  background: linear-gradient(90deg, #8B6CF0, #E8C87A);
+  transition: width 0.35s ease;
+}
+
+.qz-skip {
+  flex: none;
+  font-size: 24rpx;
+  color: #6E6A8F;
+  padding: 8rpx 12rpx;
+}
+
+.qz-intro {
+  margin-top: 40rpx;
+  padding: 24rpx;
+  border-radius: 20rpx;
+  font-size: 24rpx;
+  line-height: 1.75;
+  color: #A9A4C7;
+  background: rgba(139, 108, 240, 0.1);
+  border: 1rpx solid rgba(139, 108, 240, 0.22);
+}
+
+.qz-q { margin: 56rpx 8rpx 48rpx; }
+
+.qz-text {
+  display: block;
+  font-size: 42rpx;
+  font-weight: 600;
+  line-height: 1.5;
+  color: #E9E7F7;
+  letter-spacing: 1rpx;
+}
+
+.qz-hint {
+  display: block;
+  margin-top: 16rpx;
+  font-size: 24rpx;
+  color: #6E6A8F;
+}
+
+.qz-options { display: flex; flex-direction: column; gap: 20rpx; }
+
+.qz-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 18rpx;
+  padding: 30rpx 26rpx;
+  border-radius: 22rpx;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1rpx solid rgba(255, 255, 255, 0.08);
+  transition: all 0.18s ease;
+}
+
+.qz-option:active { transform: scale(0.985); }
+
+.qz-option-on {
+  border-color: rgba(232, 200, 122, 0.6);
+  background: rgba(232, 200, 122, 0.12);
+  box-shadow: 0 0 32rpx rgba(232, 200, 122, 0.18);
+}
+
+.qz-dot {
+  flex: none;
+  width: 20rpx;
+  height: 20rpx;
+  margin-top: 12rpx;
+  border-radius: 50%;
+  border: 2rpx solid rgba(232, 200, 122, 0.5);
+}
+
+.qz-option-on .qz-dot { background: #E8C87A; }
+
+.qz-option-text {
+  flex: 1;
+  font-size: 28rpx;
+  line-height: 1.65;
+  color: #DDD9F0;
+}
+
+.qz-foot {
+  margin-top: 56rpx;
+  display: flex;
+  justify-content: space-between;
+  gap: 20rpx;
+}
+
+/* 多选：方框勾选，和单选题的圆点区分开 */
+.qz-dot-box {
+  border-radius: 6rpx;
+}
+
+.qz-multi {
+  display: block;
+  margin-top: 12rpx;
+  font-size: 24rpx;
+  color: #E8C87A;
+}
+
+.qz-skipone {
+  margin-top: 20rpx;
+  text-align: center;
+  font-size: 24rpx;
+  color: #6E6A8F;
+}

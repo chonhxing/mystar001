@@ -1,0 +1,108 @@
+/* 角色卡。尺寸由 cc-lg / cc-md / cc-sm 控制，颜色按稀有度走稀有度类名 */
+.cc {
+  position: relative;
+  border-radius: 24rpx;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1rpx solid rgba(255, 255, 255, 0.08);
+  transition: transform 0.16s ease;
+}
+
+.cc:active { transform: scale(0.98); }
+
+/* ---- 稀有度描边 ---- */
+.cc.rarity-legend { border-color: rgba(232, 200, 122, 0.5); box-shadow: 0 8rpx 40rpx rgba(232, 200, 122, 0.16); }
+.cc.rarity-epic   { border-color: rgba(139, 108, 240, 0.5); box-shadow: 0 8rpx 32rpx rgba(139, 108, 240, 0.14); }
+.cc.rarity-rare   { border-color: rgba(99, 215, 232, 0.42); }
+.cc.rarity-common { border-color: rgba(255, 255, 255, 0.1); }
+
+/* ---- 立绘区 ---- */
+.cc-art {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(150deg, #2A2450, #14112E);
+  overflow: hidden;
+}
+
+.cc-img { width: 100%; height: 100%; }
+
+.cc-glyph {
+  font-size: 96rpx;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.9);
+  text-shadow: 0 6rpx 24rpx rgba(0, 0, 0, 0.5);
+  letter-spacing: 2rpx;
+}
+
+.cc-ring {
+  position: absolute;
+  left: 10rpx;
+  top: 10rpx;
+  right: 10rpx;
+  bottom: 10rpx;
+  border: 1rpx solid rgba(255, 255, 255, 0.18);
+  border-radius: 18rpx;
+  pointer-events: none;
+}
+
+.cc-score {
+  position: absolute;
+  right: 12rpx;
+  bottom: 12rpx;
+  display: flex;
+  align-items: baseline;
+  padding: 2rpx 14rpx;
+  border-radius: 22rpx;
+  background: rgba(11, 10, 31, 0.72);
+  border: 1rpx solid rgba(232, 200, 122, 0.35);
+}
+
+.cc-score-num { font-size: 30rpx; font-weight: 700; color: #E8C87A; }
+.cc-score-unit { font-size: 20rpx; color: #E8C87A; margin-left: 2rpx; }
+
+/* ---- 文字区 ---- */
+.cc-body { padding: 16rpx 18rpx 20rpx; }
+
+.cc-line1 { display: flex; align-items: center; justify-content: space-between; gap: 8rpx; }
+.cc-name { font-size: 30rpx; font-weight: 600; color: #E9E7F7; }
+.cc-stars { font-size: 18rpx; color: #E8C87A; letter-spacing: 1rpx; }
+.cc-work { display: block; margin-top: 4rpx; font-size: 22rpx; color: #A9A4C7; }
+
+.cc-motif {
+  display: block;
+  margin-top: 12rpx;
+  font-size: 22rpx;
+  line-height: 1.6;
+  color: #8E88B0;
+}
+
+.cc-fates { display: flex; flex-wrap: wrap; gap: 8rpx; margin-top: 12rpx; }
+.cc-fate {
+  font-size: 20rpx;
+  color: #C6B4FF;
+  padding: 2rpx 12rpx;
+  border-radius: 16rpx;
+  background: rgba(139, 108, 240, 0.14);
+}
+
+.cc-bar { height: 6rpx; border-radius: 3rpx; background: rgba(255, 255, 255, 0.1); margin-top: 14rpx; overflow: hidden; }
+.cc-bar-fill { height: 100%; border-radius: 3rpx; background: linear-gradient(90deg, #8B6CF0, #E8C87A); }
+
+/* ---- 尺寸 ---- */
+.cc-lg .cc-art { height: 420rpx; }
+.cc-lg .cc-glyph { font-size: 140rpx; }
+.cc-md .cc-art { height: 220rpx; }
+.cc-md .cc-glyph { font-size: 84rpx; }
+.cc-sm { display: flex; align-items: center; }
+.cc-sm .cc-art { width: 132rpx; height: 132rpx; flex: none; }
+.cc-sm .cc-glyph { font-size: 52rpx; }
+.cc-sm .cc-body { flex: 1; min-width: 0; padding: 12rpx 16rpx; }
+.cc-sm .cc-name { font-size: 28rpx; }
+
+/* ---- 未解锁：剪影 ---- */
+.cc-locked .cc-art { background: linear-gradient(150deg, #1A1730, #0E0C1E); }
+.cc-locked .cc-glyph { color: rgba(255, 255, 255, 0.16); }
+.cc-locked .cc-name { color: #6E6A8F; }
+.cc-locked .cc-work { color: #575374; }

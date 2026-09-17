@@ -1,0 +1,41 @@
+<!-- 角色卡：lg / md / sm 三种尺寸，美术未就位时用渐变底 + 首字占位 -->
+<view
+  wx:if="{{view}}"
+  class="cc cc-{{size}} {{view.rarityClass}} {{locked ? 'cc-locked' : ''}}"
+  bindtap="onTap"
+>
+  <view class="cc-art" style="{{locked ? '' : view.art.style}}">
+    <image
+      wx:if="{{view.artMode === 'image' && !locked}}"
+      class="cc-img"
+      src="{{view.art.src}}"
+      mode="aspectFill"
+      lazy-load
+    />
+    <text wx:else class="cc-glyph">{{locked ? '?' : view.art.glyph}}</text>
+    <view class="cc-ring" style="border-color:{{view.art.ring}}"></view>
+
+    <view wx:if="{{showResonance && resonance > 0 && !locked}}" class="cc-score">
+      <text class="cc-score-num">{{resonance}}</text>
+      <text class="cc-score-unit">%</text>
+    </view>
+  </view>
+
+  <view class="cc-body">
+    <view class="cc-line1">
+      <text class="cc-name">{{locked ? '未解锁' : char.name}}</text>
+      <text wx:if="{{!locked}}" class="cc-stars">{{view.stars}}</text>
+    </view>
+    <text class="cc-work">{{locked ? '在匹配中遇见 TA' : '《' + char.work + '》· ' + char.medium}}</text>
+
+    <block wx:if="{{!locked}}">
+      <text wx:if="{{size !== 'sm'}}" class="cc-motif">{{view.motif}}</text>
+      <view wx:if="{{showFates && view.fates.length}}" class="cc-fates">
+        <text wx:for="{{view.fates}}" wx:key="id" class="cc-fate">{{item.name}}</text>
+      </view>
+      <view wx:if="{{showResonance && resonance > 0 && size === 'lg'}}" class="cc-bar">
+        <view class="cc-bar-fill" style="{{view.resonanceStyle}}"></view>
+      </view>
+    </block>
+  </view>
+</view>

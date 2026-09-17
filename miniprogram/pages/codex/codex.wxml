@@ -1,0 +1,73 @@
+<star-bg ring="{{false}}" />
+
+<view class="page-body">
+  <!-- 收集进度 -->
+  <view class="cx-head fade-up">
+    <view class="row-between">
+      <view>
+        <view class="title-lg">命途图鉴</view>
+        <text class="small muted" style="display:block;margin-top:8rpx">
+          每一个角色都是一条你没走过的路
+        </text>
+      </view>
+      <view class="cx-count">
+        <text class="cx-count-num">{{unlockedCount}}</text>
+        <text class="cx-count-total">/ {{total}}</text>
+      </view>
+    </view>
+    <view class="cx-bar">
+      <view class="cx-bar-fill" style="width:{{percent}}%"></view>
+    </view>
+  </view>
+
+  <!-- 筛选 -->
+  <view class="cx-filters fade-up delay-1">
+    <view class="cx-chip-row">
+      <view
+        wx:for="{{rarityFilters}}"
+        wx:key="key"
+        class="cx-chip {{rarityKey === item.key ? 'cx-chip-on' : ''}}"
+        data-key="{{item.key}}"
+        bindtap="onRarityTap"
+      >{{item.name}}</view>
+    </view>
+    <view class="cx-chip-row">
+      <view
+        wx:for="{{statusFilters}}"
+        wx:key="key"
+        class="cx-chip {{statusKey === item.key ? 'cx-chip-on' : ''}}"
+        data-key="{{item.key}}"
+        bindtap="onStatusTap"
+      >{{item.name}}</view>
+    </view>
+  </view>
+
+  <!-- 列表 -->
+  <view class="cx-grid">
+    <view wx:for="{{list}}" wx:key="id" class="cx-cell">
+      <char-card
+        char="{{item.char}}"
+        rarity="{{item.rarity}}"
+        resonance="{{item.score}}"
+        size="md"
+        locked="{{!item.unlocked}}"
+        show-fates="{{false}}"
+        bindtapcard="onCardTap"
+      />
+      <text wx:if="{{item.countText}}" class="cx-count-text">{{item.countText}}</text>
+    </view>
+  </view>
+
+  <view wx:if="{{list.length === 0}}" class="cx-empty">
+    <text class="muted">这个筛选下还没有角色</text>
+  </view>
+
+  <view class="actions">
+    <view class="btn btn-ghost" bindtap="onDraw">去匹配，遇见新的命途</view>
+  </view>
+
+  <view class="disclaimer">
+    角色名与作品名仅用于指代与娱乐性解读，相关权利归各自权利人所有。
+    本页所有描述均为原创文字，未使用任何官方素材。
+  </view>
+</view>

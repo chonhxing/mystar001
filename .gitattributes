@@ -1,0 +1,19 @@
+# 换行符：仓库里统一 LF。
+#
+# 为什么重要：Dockerfile 和 cloud/*.sql 会被云托管的构建机读取，
+# Windows 上默认把 LF 转成 CRLF，虽然多数情况无害，
+# 但 shell 脚本里的 CRLF 是经典的"容器里报 \r: not found"来源。
+* text=auto eol=lf
+
+# Windows 专用的脚本保留 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 图片按二进制处理，别做任何换行转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+
+# 避免 git 把生成物当成"可合并文本"
+store/*.png -diff

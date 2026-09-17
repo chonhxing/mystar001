@@ -1,0 +1,19 @@
+<view class="db">
+  <view wx:for="{{rows}}" wx:key="key" class="db-row">
+    <view class="db-head">
+      <text class="db-name">{{item.name}}</text>
+      <text class="db-badge {{item.active ? 'db-badge-pos' : 'db-badge-neg'}}">{{item.badge}}</text>
+      <text class="db-value" style="{{item.valueStyle}}">{{item.value}}</text>
+    </view>
+
+    <view class="db-track">
+      <view class="db-fill" style="{{item.fillStyle}}"></view>
+      <view class="db-center"></view>
+    </view>
+
+    <view wx:if="{{showPoles}}" class="db-poles">
+      <text class="db-pole {{item.active ? 'db-pole-on' : ''}}">{{item.pos}}</text>
+      <text class="db-pole db-pole-r {{item.active ? '' : 'db-pole-on'}}">{{item.neg}}</text>
+    </view>
+  </view>
+</view>
