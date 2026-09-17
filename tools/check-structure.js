@@ -308,19 +308,20 @@ section('5. 关键约定与合规');
   ok(!!art.resolveArt({ id: 'naruto', name: '漩涡鸣人', rarity: 'epic' }).glyph, '美术未就位时占位渲染可用');
 
   /**
-   * Dockerfile 的两条硬约束。它们对应一个真实踩过的坑：
-   *   WORKDIR / COPY 建出来的文件属主是 root，而镜像末尾是 `USER node`,
-   *   于是 server/runtime 建不出来、store.json 一直写失败。
-   *   当时 store.js 还把"文件落盘"和"MySQL 落盘"写在一个 try 里，
-   *   文件一失败就把 MySQL 也跳过了 —— 容器一切正常，重启后用户数据全没。
-   * 现在两侧都修好了（store.js 已解耦，这里再钉住 Dockerfile 这一侧）。
+   * Dockerfile 的两条硬约束，都对应真实踩过的坑（云托管上各挂了一次）：
+   *   ① `USER node` + 监听 80 端口 → 容器直接退出：
+   *      `Error: listen EACCES: permission denied 0.0.0.0:80`
+   *      本地 Docker 允许非 root 绑低端口，云托管的运行时不允许。
+   *      现象极难猜：控制台卡在"部署中"，域名还由旧版本应答，接口全是 404。
+   *   ② DATA_DIR 落在 /app 下（属主 root）→ 存档目录建不出来。
+   *      store.js 现在已经解耦（不影响 MySQL 那份），但日志会一直刷错误。
    */
   const dockerfile = fs.readFileSync(path.join(ROOT, 'Dockerfile'), 'utf8');
   const usesNodeUser = /\nUSER\s+node\b/.test(dockerfile);
-  const chowns = /chown[^\n]*node/.test(dockerfile);
-  ok(!usesNodeUser || chowns,
-    'Dockerfile 用非 root 跑时，必须把 /app 的属主交给 node（否则存档目录建不出来）',
-    usesNodeUser && !chowns ? '有 USER node 但没有 chown —— 容器里写文件会 EACCES' : '');
+  const port80 = /ENV\s+PORT=80\b/.test(dockerfile);
+  ok(!(usesNodeUser && port80),
+    'Dockerfile 没有"非 root + 监听 80"的组合（云托管会 EACCES 起不来）',
+    usesNodeUser && port80 ? 'USER node 又要绑 80：容器会以 listen EACCES 退出，pod 永远不 ready' : '');
   const dataDirMatch = /ENV\s+DATA_DIR=(\S+)/.exec(dockerfile);
   const dataDirInApp = dataDirMatch && dataDirMatch[1].indexOf('/app') === 0;
   ok(!dataDirInApp,

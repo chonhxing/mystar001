@@ -59,8 +59,16 @@ EXPOSE 80
 # 放 /tmp 还有个好处：它是唯一保证任何用户都能写的地方。
 ENV DATA_DIR=/tmp/wotui-data
 
-# 用非 root 跑：镜像里默认的 node 用户已经存在
-USER node
+# ⚠️ **不要用 `USER node`**。踩过一次，日志是这样的：
+#     Error: listen EACCES: permission denied 0.0.0.0:80
+#     code: 'EACCES', syscall: 'listen', port: 80
+#   本地 Docker 默认允许非 root 绑低端口（ip_unprivileged_port_start=0），
+#   但云托管的运行时**不允许** —— 容器一起就退出，pod 永远不 ready，
+#   控制台里表现为"部署中..."卡住、域名还在由旧版本（模板示例应用）应答，
+#   于是访问任何接口都是 404 "Cannot GET /api/health"，非常难猜到原因。
+#   容器规格本来就是单租户的，跑 root 的代价可以接受；要跑非 root 就得
+#   把监听端口改成 1024 以上，并在控制台把容器端口改成同一个值。
+# USER node
 
 # 不用 npm start（那条命令带 --env-file=server/.env，云托管上环境变量由控制台注入）
 CMD ["node", "server/index.js"]
