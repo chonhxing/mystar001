@@ -6,7 +6,7 @@
 | --- | --- |
 | 数据库 | **已建好并通过外网实测**：库 `wo_tui_zhan_xing`、表 `store_snapshot`（MySQL 5.7.18 CynosDB） |
 | 代码推送 | 已合并云托管官方模板仓库的初始提交，模板示例应用已删除，我们的代码优先 |
-| 客户端配置 | `config/index.js` 的云调用已打开，服务名预设 `wotui-server`（**控制台起的服务名要和它一致，否则告诉我改成你的**） |
+| 客户端配置 | `config/index.js` 的云调用已打开，服务名已按控制台实际名字填好：`express-lxpq` |
 | 环境变量 | 桌面 `云托管环境变量-粘贴用.txt`，**整段粘进控制台即可**（含 DeepSeek key） |
 | 表结构 | `cloud/init.sql` 已经跑过一遍，不需要再手动执行 |
 >
@@ -121,7 +121,7 @@ git ls-files | grep -E "\.env$"     # 应该什么都没有
 
 | 配置项 | 填什么 | 为什么 |
 | --- | --- | --- |
-| 服务名称 | 自己起一个，例如 `wotui-server` | **必须和客户端配置里的 `SERVICE` 完全一致**（区分大小写，填错会 404/503） |
+| 服务名称 | 用官方模板建的话它会给个 `express-xxxx` 之类的名字 | **必须和客户端配置里的 `SERVICE` 完全一致**（区分大小写，填错会 404/503）。我们线上是 `express-lxpq` |
 | 代码源 | GitHub → 授权并选中刚推的私有仓库 | 之后每次 push 都能自动构建 |
 | 分支 | `master` | 和推送的分支保持一致 |
 | Dockerfile 路径 | `Dockerfile`（仓库根目录） | 已在仓库里准备好 |
@@ -218,7 +218,7 @@ SELECT id, updated_at, CHAR_LENGTH(data) / 1024 AS kb FROM store_snapshot;
 CLOUD: {
   ENABLED: true,                          // 部署好之后改成 true
   ENV: 'prod-d2g78apcte70a43f7',          // 已按你的环境填好
-  SERVICE: 'wotui-server'                 // ← 填你第 2 步起的服务名
+  SERVICE: 'express-lxpq'                 // ← 控制台里的实际服务名
 },
 ```
 
@@ -334,8 +334,7 @@ DB_CHECK_PASSWORD=你的库密码 npm run db:e2e     # 起服务 → 造数据 �
 
 ## 8. 部署完之后交给我做的两件事
 
-1. **告诉我控制台里的服务名**：如果不是 `wotui-server`，我改 `config/index.js` 的
-   `CLOUD.SERVICE`（现在预设的就是 `wotui-server`）
+1. ~~告诉我控制台里的服务名~~ **已确认**：`express-lxpq`（官方模板建服务时它自己起的名字），已写进 `config/index.js` 的 `CLOUD.SERVICE`
 2. ~~AI 解读改异步~~ **已完成**：改成「提交任务 + 轮询结果」了，
    AI 也能走云调用，彻底不需要公网域名（见第 5 节）。
    你部署完只要在真机上确认一次：预览 → 我的 → 设置 → **解读服务状态**

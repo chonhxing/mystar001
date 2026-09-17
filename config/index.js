@@ -66,8 +66,9 @@ const CONFIG = {
     ENABLED: true,
     ENV: 'prod-d2g78apcte70a43f7',
     // ⚠️ 必须和云托管控制台里的**服务名完全一致**（区分大小写，填错会 404/503）。
-    //    你在控制台起的名字如果不是这个，改这一行。
-    SERVICE: 'wotui-server'
+    //    实际服务名从控制台读出来的：express-lxpq（用官方模板新建服务时
+    //    模板自己起的名字，不是我们预设的 wotui-server）。
+    SERVICE: 'express-lxpq'
   },
 
   // ---------- 美术资源（立绘是可选的，不是必须的） ----------
