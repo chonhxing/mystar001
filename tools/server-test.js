@@ -15,7 +15,8 @@ const path = require('path');
 const fs = require('fs');
 
 // 和 client-test 一样放到 server/ 下，已经被 .gitignore 覆盖
-const TMP = path.join(__dirname, '..', 'server', '.tmp-server-test');
+const ROOT = path.join(__dirname, '..');
+const TMP = path.join(ROOT, 'server', '.tmp-server-test');
 // 端口按 PID 派生，避免与残留进程或并发运行撞车
 const APP_PORT = 8799 + (process.pid % 200);
 const MOCK_PORT = APP_PORT + 1;
@@ -1044,6 +1045,83 @@ function waitFor(url, tries) {
     const oversized = await post('/api/divinate', { key: 'x'.repeat(5000), dims: { light: 50 } }, t);
     ok(oversized.status === 400 || oversized.status === 200, '超长 key 被处理而不是崩掉',
       String(oversized.status));
+  }
+
+  // ------------------------------------------------------------ 云托管持久化
+  section('云托管：MySQL 快照持久化（注入假驱动验证 SQL，不需要真库）');
+  {
+    const { createMysqlSink, attach } = require(path.join(ROOT, 'server', 'store-mysql.js'));
+    const { createStore } = require(path.join(ROOT, 'server', 'store.js'));
+
+    const sql = [];
+    let row = null;
+    const driver = {
+      createPool: () => ({
+        query: async (q, params) => {
+          const s = String(q).replace(/\s+/g, ' ').trim();
+          sql.push(s);
+          if (/^SELECT data FROM/.test(s)) return [row ? [{ data: row }] : []];
+          if (/^INSERT INTO/.test(s)) {
+            row = params[1];
+            return [{ affectedRows: 1 }];
+          }
+          return [[]];
+        },
+        end: async () => {}
+      })
+    };
+    const cfg = { driver, host: 'h', user: 'u', password: 'p', database: 'db' };
+
+    const sink = createMysqlSink(cfg);
+    ok((await sink.load()) === null, '空库时 load 返回 null');
+    await sink.save('{"a":1}');
+    ok((await sink.load()) === '{"a":1}', 'save 之后能读回来');
+    ok(sql.some((s) => /CREATE TABLE IF NOT EXISTS store_snapshot/.test(s)), '自动建表（幂等，重复执行无害）');
+    ok(sql.some((s) => /INSERT INTO store_snapshot .*ON DUPLICATE KEY UPDATE/.test(s)),
+      '写库用 upsert：反复写不会插出多行');
+    ok(sql.some((s) => /WHERE id = \?/.test(s)), '固定读写 id=1 那一行');
+
+    const dir = path.join(ROOT, 'server', `.tmp-mysql-${Date.now()}`);
+    const store = createStore({ dataDir: dir, proseCacheDays: 30 });
+    const r = await attach(store, cfg);
+    ok(r.ok && r.restored, 'attach 能把历史快照读回内存（付费权益不丢的前提）');
+
+    store.setUser('openid_x', { passExpireAt: 1700000000000, orders: { o1: 1 } });
+    store.save();
+    await new Promise((res) => setTimeout(res, 50));
+    const written = JSON.parse(row);
+    ok(!!(written.users && written.users.openid_x), '用户权益被写进快照');
+    ok(written.users.openid_x.passExpireAt === 1700000000000,
+      '畅玩卡到期时间完整落库（重启后不会丢已购权益）');
+
+    // 模拟重启：新 store 从同一份数据恢复
+    const store2 = createStore({ dataDir: path.join(ROOT, 'server', `.tmp-mysql2-${Date.now()}`) });
+    await attach(store2, cfg);
+    ok(!!store2.getUser('openid_x') && store2.getUser('openid_x').passExpireAt === 1700000000000,
+      '重启后能从 MySQL 恢复用户权益');
+
+    // 连不上时不能把服务拖垮
+    const bad = createMysqlSink({
+      driver: {
+        createPool: () => ({
+          query: async () => {
+            throw new Error('connect ECONNREFUSED');
+          },
+          end: async () => {}
+        })
+      },
+      host: 'h', user: 'u', password: 'p', database: 'db'
+    });
+    const store3 = createStore({ dataDir: path.join(ROOT, 'server', `.tmp-mysql3-${Date.now()}`) });
+    const r3 = await attach(store3, { driver: bad, host: 'h', user: 'u', password: 'p', database: 'db' });
+    ok(r3.ok === false, '连不上 MySQL 时不抛异常，自动降级为纯内存');
+    ok(typeof store3.getUser === 'function', '降级后 store 依然可用（服务不会因此起不来）');
+
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch (e) {
+      /* 忽略 */
+    }
   }
 
   console.log('\n========================================');

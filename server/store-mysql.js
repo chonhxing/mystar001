@@ -41,17 +41,20 @@ CREATE TABLE IF NOT EXISTS ${TABLE} (
 function createMysqlSink(opts) {
   const o = opts || {};
   let pool = null;
-  let mysql = null;
+  // 允许注入驱动：测试用假驱动就能验证 SQL，不必真装 mysql2、也不必真连库
+  let mysql = o.driver || null;
   let lastError = '';
 
   function connect() {
     if (pool) return pool;
-    // 按需加载：没装 mysql2 时给出可执行的提示，而不是一个看不懂的 MODULE_NOT_FOUND
-    try {
-      // eslint-disable-next-line global-require
-      mysql = require('mysql2/promise');
-    } catch (e) {
-      throw new Error('缺少 mysql2 —— 云托管的镜像里会装（见 Dockerfile）；本地想连库请 npm i mysql2');
+    if (!mysql) {
+      // 按需加载：没装 mysql2 时给出可执行的提示，而不是一个看不懂的 MODULE_NOT_FOUND
+      try {
+        // eslint-disable-next-line global-require
+        mysql = require('mysql2/promise');
+      } catch (e) {
+        throw new Error('缺少 mysql2 —— 云托管的镜像里会装（见 Dockerfile）；本地想连库请 npm i mysql2');
+      }
     }
     pool = mysql.createPool({
       host: o.host,
