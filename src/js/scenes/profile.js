@@ -384,10 +384,19 @@ class ProfileScene extends Scene {
       const short = d.ok
         ? `${via} · ${d.aiConfigured ? (d.devLogin ? '按设备认人' : '正常') : 'AI 未配置'}`
         : `${via}失败`;
+      // wx.login 的失败原因只有客户端知道（服务端只能看到"没带 code"），
+      // 所以必须在这里显示出来，否则真机上"账号登录不上"就无从查起
+      const loginFail = api.sessionInfo().loginFail;
+      const loginWarn = loginFail
+        ? `微信登录没拿到凭证（${loginFail}）—— 常见原因：项目 appid 不是这个应用、或开发者工具没登录`
+        : '';
+      const detail = d.ok && d.aiConfigured && !d.hint && !loginWarn
+        ? ''
+        : `${d.message}${d.hint ? `\n${d.hint}` : ''}${loginWarn ? `\n${loginWarn}` : ''}`;
       this.backend = {
         text: short,
-        state,
-        detail: d.ok && d.aiConfigured && !d.hint ? '' : `${d.message}${d.hint ? `\n${d.hint}` : ''}`
+        state: loginWarn && state === 'ok' ? 'warn' : state,
+        detail
       };
       this.build();
     });

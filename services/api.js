@@ -195,6 +195,37 @@ function doRequest(path, opts, retried) {
 }
 
 /**
+ * wx.login 拿 code。
+ *
+ * ⚠️ 失败原因**必须留下来**。以前两处都写成 `fail: () => send(null)`，
+ *    于是"客户端没带 code"这件事在两端都看不见：服务端只回一句 401 + MISSING_CODE、
+ *    3 毫秒就返回，客户端连提示都没有 —— 排查时只能靠猜（真机上踩过）。
+ *    现在把原因带回上层，并由状态页显示出来。
+ *
+ * @returns {Promise<{code:string, reason:string}>} reason 非空表示失败原因
+ */
+function wxLoginCode() {
+  return new Promise((resolve) => {
+    if (typeof wx.login !== 'function') {
+      resolve({ code: '', reason: 'NO_WX_LOGIN_API' });
+      return;
+    }
+    wx.login({
+      success: (r) => resolve({ code: (r && r.code) || '', reason: r && r.code ? '' : 'EMPTY_CODE' }),
+      fail: (e) => resolve({ code: '', reason: (e && e.errMsg) || 'WX_LOGIN_FAIL' })
+    });
+  });
+}
+
+/** 最近一次 wx.login 的失败原因（状态页会给用户/开发者看） */
+let lastLoginFail = '';
+function setLoginFail(reason) {
+  if (reason) lastLoginFail = String(reason).slice(0, 120);
+  // 这里刻意不引 analytics：本模块是底层传输层，报告由上层（boot/account）做，
+  // 免得把上报依赖牵进来、也免得在"连不上后端"时反而卡住
+}
+
+/**
  * 建立会话：wx.login 拿 code → 换 token。
  * 服务端没配微信 appid 时会进入开发模式，用本地 devId 认人。
  */
@@ -219,14 +250,11 @@ function ensureSession(force) {
       });
     };
 
-    if (typeof wx.login !== 'function') {
-      send(null);
-      return;
-    }
-    wx.login({
-      success: (r) => send(r && r.code),
-      // 登录失败（比如开发者工具没登录）也照样试一次：服务端开发模式还能用 devId
-      fail: () => send(null)
+    // 登录失败（开发者工具没登录、项目 appid 还是测试号…）也照样试一次：
+    // 服务端处于开发模式时还能用 devId；失败原因留给状态页显示
+    wxLoginCode().then((r) => {
+      if (r.reason) setLoginFail(r.reason);
+      send(r.code);
     });
   });
 }
@@ -474,13 +502,15 @@ function relogin() {
         }
       });
     };
-    if (typeof wx.login !== 'function') {
-      send(null);
-      return;
-    }
-    wx.login({
-      success: (r) => send(r && r.code),
-      fail: () => send(null)
+    wxLoginCode().then((r) => {
+      if (r.reason) {
+        setLoginFail(r.reason);
+        // 没拿到 code 就别发请求了：服务端只会回一句 401（3 毫秒），
+        // 用户看到"重新登录失败"、我们看不到原因 —— 那是真机上踩过的坑
+        resolve({ ok: false, error: 'WX_LOGIN_NO_CODE', message: `微信登录没拿到凭证：${r.reason}` });
+        return;
+      }
+      send(r.code);
     });
   });
 }
@@ -602,7 +632,15 @@ function fortuneOnly(localResult) {
 }
 
 function sessionInfo() {
-  return { hasToken: !!token, base: CONFIG.API_BASE, remote: CONFIG.USE_REMOTE, weakNetwork };
+  return {
+    hasToken: !!token,
+    base: CONFIG.API_BASE,
+    remote: CONFIG.USE_REMOTE,
+    weakNetwork,
+    // 微信登录最近一次失败的原因（空 = 没失败过）。
+    // 真机上"账号登录不上"绝大多数是这一类，而它发生在客户端、服务端看不到。
+    loginFail: lastLoginFail
+  };
 }
 
 module.exports = {

@@ -147,9 +147,12 @@ const isDevMode = () => !CONFIG.wechat.appid || !CONFIG.wechat.secret;
  * @param {object} store 可选：传了就把 session_key 存起来（支付签名要用）
  */
 async function login(body, store) {
-  if (body && body.code && !isDevMode()) {
+  const hasCode = !!(body && body.code);
+  if (hasCode && !isDevMode()) {
+    const t0 = Date.now();
     try {
       const r = await code2session(body.code);
+      const ms = Date.now() - t0;
       if (r.openid) {
         if (store && r.sessionKey) store.setSessionKey(r.openid, r.sessionKey);
         return {
@@ -162,6 +165,21 @@ async function login(body, store) {
           sessionKey: r.sessionKey
         };
       }
+      /**
+       * ⚠️ 失败原因**必须打日志**。
+       *
+       * 以前这里一声不响地回 401，线上只看到 `POST /api/account/relogin 401 4ms`，
+       * 完全分不清是"客户端没带 code"、"code 被用过/过期"还是"被平台拦截"——
+       * 排查全靠猜。现在把微信返回的 errcode/errmsg 和耗时都打出来：
+       *   40029 code 无效（多半被用过或过期）
+       *   40125 appsecret 不对（环境变量填错/轮换过）
+       *   40013 appid 不对（客户端和服务端不是同一个应用）
+       *   40226 高风险用户被平台拦截
+       */
+      console.warn(
+        `[auth] 登录失败 errcode=${r.code || '-'} errmsg=${r.error || '-'} ${ms}ms` +
+          `（appid=${CONFIG.wechat.appid || '(空)'}）`
+      );
       return {
         ok: false,
         error: r.blocked ? 'USER_BLOCKED' : r.code ? `WX_${r.code}` : 'WX_LOGIN_FAILED',
@@ -175,8 +193,19 @@ async function login(body, store) {
           : r.error
       };
     } catch (e) {
+      console.warn(`[auth] 登录失败：连不上微信接口（${e && e.message}）`);
       return { ok: false, error: 'WX_UNREACHABLE' };
     }
+  }
+
+  /**
+   * 走到这里有两种情况，日志要分开写清楚（这是真机上最难查的一类）：
+   *   · 正式模式但客户端没带 code —— wx.login 没成功（appid 不对/开发者工具没登录…）
+   *   · 开发模式 —— 本来就按设备认人，属于正常
+   */
+  if (!isDevMode() && !hasCode) {
+    console.warn('[auth] 登录失败 MISSING_CODE：客户端没带 code（wx.login 没拿到凭证？）');
+    return { ok: false, error: 'MISSING_CODE' };
   }
 
   if (isDevMode()) {

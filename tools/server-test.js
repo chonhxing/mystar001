@@ -536,6 +536,37 @@ function waitFor(url, tries) {
     global.fetch = realFetch;
   }
 
+  // ------------------------------------------------------------ 登录失败可诊断
+  section('5.9 登录失败必须留痕（真机上"账号登录不上"靠这个查）');
+  {
+    // 线上踩过的坑：客户端没带 code 时服务端只回一句 401（3 毫秒），
+    // 两端都没有任何原因 —— 分不清是 code 过期、appsecret 错、还是客户端压根没登录。
+    // 现在要求：失败原因写进日志（云托管「运行日志」里直接看得到）。
+    const wxauth = require(path.join(__dirname, '..', 'server', 'wxauth.js'));
+    const { CONFIG } = require(path.join(__dirname, '..', 'server', 'config.js'));
+    // 测试环境默认没配微信（就是开发模式），先临时"配上"才走得到正式那条路
+    const saved = { appid: CONFIG.wechat.appid, secret: CONFIG.wechat.secret };
+    CONFIG.wechat.appid = 'wxtestappid';
+    CONFIG.wechat.secret = 'testsecret';
+
+    const realWarn = console.warn;
+    const grabbed = [];
+    let r;
+    try {
+      console.warn = (...args) => { grabbed.push(args.join(' ')); };
+      // ① 正式模式下客户端没带 code
+      r = await wxauth.login({ devId: 'probe' });
+    } finally {
+      console.warn = realWarn;
+      CONFIG.wechat.appid = saved.appid;
+      CONFIG.wechat.secret = saved.secret;
+    }
+    ok(r.ok === false && r.error === 'MISSING_CODE', `没带 code → 明确返回 MISSING_CODE（${r.error}）`);
+    ok(grabbed.some((s) => s.indexOf('MISSING_CODE') >= 0),
+      '并把"客户端没带 code"写进了日志',
+      grabbed.join(' ｜ ').slice(0, 120));
+  }
+
   // ------------------------------------------------------------ 抽签模式
   section('6. 随心抽签模式');
   {
